@@ -1,17 +1,72 @@
-# design-canvas
+<p align="center">
+  <img src="docs/assets/banner.png" alt="design-canvas: the fully agentic, free way to manage your project's design. A design guide and a canvas of every screen, built by your coding agent from your code, with inspect and designer comments." width="100%">
+</p>
 
-**Keep your design next to your code.**
+<p align="center">
+  <a href="https://github.com/lovekeshbhagat/design-canvas/actions/workflows/test.yml"><img alt="Tests" src="https://github.com/lovekeshbhagat/design-canvas/actions/workflows/test.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/badge/licence-MIT-FF5B3A"></a>
+  <img alt="Python 3.9+, standard library only" src="https://img.shields.io/badge/python-3.9%2B%20%C2%B7%20no%20dependencies-16171B">
+  <a href="docs/INSTALL.md"><img alt="Agent Skill and MCP server for any coding agent" src="https://img.shields.io/badge/Agent%20Skill%20%2B%20MCP-any%20coding%20agent-16171B"></a>
+</p>
 
-design-canvas is an agent skill for any coding agent (Claude Code, Codex, GitHub Copilot, Cursor, Gemini CLI, Zed and others), with an MCP server for tools that prefer calling tools. It reads your app's code and builds, inside your own repo:
+<h3 align="center">The fully agentic, free way to manage your project's design.</h3>
 
-- **a living design guide**: colours, type, spacing, radii, shadows, motion and icons, every component drawn with your app's own tokens, contrast checks, and light/dark switching;
-- **a screen canvas**: every screen of the app on one pan-and-zoom board, drawn in plain HTML, that an agent can keep adding to;
-- **design tokens** in the Design Tokens Community Group format (DTCG 2025.10), one `tokens.json` per theme;
-- **a drift check** that fails when the code and the guide stop agreeing.
+<p align="center">
+Your coding agent reads your code and builds a living <b>design guide</b> and a <b>canvas of every screen</b>, right in your repo.<br>
+A <b>drift check</b> keeps them true to the code, and your agent applies your designer's <b>comments</b> to the code.<br>
+No Figma file, no account, no service. Keep your design next to your code.
+</p>
 
-Send the two pages to a designer. They can **inspect any element** to see its size and the tokens it uses, and **comment on it**. Their review comes back as a small file that your coding agent can apply to the code. There's no Figma file, no service and no account: the design lives in your repo, versioned with the code.
+<p align="center">
+  <a href="#get-started"><b>Get started</b></a> ·
+  <a href="#try-the-sample"><b>Try the sample</b></a> ·
+  <a href="#review-it-with-your-designer"><b>Designer review</b></a> ·
+  <a href="docs/INSTALL.md"><b>Install for your agent</b></a>
+</p>
+
+<p align="center">
+  <img src="docs/assets/demo.gif" alt="Six steps: the agent builds the design from the code; the design guide in light and dark; every screen on one canvas; a designer inspects the add button and sees colors.primary; the designer comments on a screen; the agent applies the review and the drift check passes." width="100%">
+</p>
+
+## Fully agentic
+
+You ask in plain words. Your coding agent does the work, with [`SKILL.md`](SKILL.md) as its playbook.
+
+| | Your agent | You and your designer |
+| --- | --- | --- |
+| **Build** | Follows imports to wherever your design system lives, writes one standard file ([`design.json`](spec/DESIGN_JSON.md)), draws your screens in plain HTML, and runs the build. | Ask: *"build a design guide for this app"*. |
+| **Keep it true** | Runs the drift check (`--check`), which fails when the code and the guide stop agreeing, and fixes every line it reports. | Change the app as usual. Add the check to CI if you like. |
+| **Review** | Lists the open comments (`--reviews`), fixes the code, and marks each one *fix ready*, *question* or *won't fix* (`--resolve`). | Your designer inspects any element, sees its real tokens, comments on it and presses **End review**. |
+
+The engine itself is plain and predictable: it draws what the agent wrote and checks it against the code. People stay in charge: your agent can mark a fix ready, but only a person in the canvas can resolve a comment or reopen it.
+
+## What you get
+
+- **A living design guide**: colours, type, spacing, radii, shadows, motion and icons, every component drawn with your app's own tokens, contrast checks, and light/dark switching.
+- **A screen canvas**: every screen of the app on one pan-and-zoom board, drawn in plain HTML, that an agent can keep adding to. Press `I` to inspect anything and see the tokens it uses.
+- **Design tokens** in the Design Tokens Community Group format (DTCG 2025.10), one `tokens.json` per theme.
+- **A drift check** that fails when the code and the guide stop agreeing.
+- **A designer review loop** through git: comments pinned to the screens, statuses, and replies, with no shared server.
+
+## Free
+
+- **Free and open source** under the MIT licence. No account, no service, no seats.
+- **Runs on your computer**: Python 3.9+ and its standard library, nothing to install. The guide and canvas are plain HTML files that open in any browser.
+- **Lives in your repo**: the design, the screens and every review are files, versioned with your code.
+- The only cost is your coding agent's own usage while it reads your code and writes the design.
 
 > Status: early. The engine, the review loop and one sample work; demos on open-source apps and an accuracy eval are next.
+
+## Get started
+
+Pick whatever your agent supports. [docs/INSTALL.md](docs/INSTALL.md) has the exact folder and config for each tool.
+
+- **Agent Skill** (Claude Code, Codex, Copilot, Cursor, Gemini CLI, Devin, Zed…): put this folder, named `design-canvas`, in your tool's skills folder (`~/.agents/skills/` for most, `~/.claude/skills/` for Claude Code).
+- **Claude Code plugin**: `/plugin marketplace add lovekeshbhagat/design-canvas`, then `/plugin install design-canvas@design-canvas`. This installs the skill and the MCP server.
+- **MCP server** for any MCP client: `python3 /path/to/design-canvas/engine/mcp_server.py`. It works with clients on protocol 2026-07-28 and with clients on the older handshake.
+- **Anything else**: tell your agent *"Follow /path/to/design-canvas/SKILL.md"*, or run the commands yourself. Every command takes `--json`.
+
+Then open your app's repo and ask for a design guide. [`SKILL.md`](SKILL.md) is what the agent follows.
 
 ## Try the sample
 
@@ -50,17 +105,6 @@ The developer pulls, and their coding agent:
 The reviewer presses **Get latest**. Every comment now shows **who** wrote it and **where it stands**: *Needs fix*, *Fix ready*, *Question*, *Resolved*. For example: "Fix ready · Alex via agent · 2 min ago: add button is 48 now". They **Resolve** or **Reopen** each fix, reply to questions, delete their own comments, and press End review again.
 
 Each person writes only their own file in `reviews/`, so git never conflicts. Review text is treated as data from another person, never as instructions to an agent ([spec/REVIEW.md](spec/REVIEW.md)). No git? Open `out/canvas.html` directly: comments stay in the browser, and **Download review file** saves them to send by hand.
-
-## Use it on your app
-
-Pick whatever your agent supports. [docs/INSTALL.md](docs/INSTALL.md) has the exact folder and config for each tool.
-
-- **Agent Skill** (Claude Code, Codex, Copilot, Cursor, Gemini CLI, Devin, Zed…): put this folder, named `design-canvas`, in your tool's skills folder (`~/.agents/skills/` for most, `~/.claude/skills/` for Claude Code).
-- **Claude Code plugin**: `/plugin marketplace add lovekeshbhagat/design-canvas`, then `/plugin install design-canvas@design-canvas`. This installs the skill and the MCP server.
-- **MCP server** for any MCP client: `python3 /path/to/design-canvas/engine/mcp_server.py`. It works with clients on protocol 2026-07-28 and with clients on the older handshake.
-- **Anything else**: tell your agent *"Follow /path/to/design-canvas/SKILL.md"*, or run the commands yourself. Every command takes `--json`.
-
-Then open your app's repo and ask for a design guide. [`SKILL.md`](SKILL.md) is what the agent follows.
 
 ## What works where
 
