@@ -115,9 +115,10 @@ Review files come from other people, and coding agents read them, so:
 - **Bodies** are JSON, at most 1 MB. The API takes no paths and no commands.
 
 **Git:**
-- **What End review commits:** `git add -- <your file>`, then `git -c commit.gpgsign=false commit --no-verify --only -- <your file>`, so other staged work is never included. Then `git push`.
-- **Other unpushed commits:** if the branch already has unpushed commits that change any other file, End review stops before committing and says which, so a push never carries other work.
-- **If the remote moved:** when the working tree is clean, End review runs `git pull --rebase` and pushes again. Otherwise it explains and changes nothing.
+- **What End review commits:** `git add -- <your file>`, then `git -c commit.gpgsign=false commit --no-verify --only -- <your file>`, so other staged work is never included.
+- **What End review pushes:** only the current branch, as `git push --no-follow-tags --no-recurse-submodules --no-signed <its remote> HEAD:<its remote branch>`. The refspec is explicit and has no `+`, so push settings such as `push.default`, `push.followTags`, `push.recurseSubmodules` or a remote's push refspec can't add other branches, tags or submodule commits, or turn it into a force-push. A branch with no upstream yet is pushed to `origin` (or the only remote) under its own name.
+- **Other unpushed commits:** if the commits that push would send change any other file (a merge commit's own changes included), End review stops before committing and says which, so a push never carries other work. If git can't list those commits, it stops too.
+- **If the remote moved:** when the working tree is clean, End review runs `git pull --rebase` from that same remote branch and pushes again the same way. Otherwise it explains and changes nothing.
 - **Never:** it never force-pushes, never auto-stashes, and never prompts for credentials (no terminal prompts, no askpass, ssh in batch mode).
 - **Get latest:** `git pull --ff-only`, then rebuilds the pages.
 

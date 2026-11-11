@@ -40,7 +40,7 @@ python3 engine/build.py design-canvas --serve      # prints a link that only thi
 On the screen board, the reviewer:
 - **inspects** any element (press `I`) to see its size and **the tokens it uses**, by name and per theme (`colors.primary`, `type.label`, `spacing.xl`). Anything typed by hand instead of using a token is flagged as **off-system**.
 - **comments** on it. A numbered pin marks the element, and the comment saves to their own review file as they type.
-- presses **End review**. This commits only their review file and pushes it. If the branch also has other unpushed commits, it stops and says so, so other work is never sent.
+- presses **End review**. This commits only their review file and pushes only that branch, with no tags and never a force-push, whatever their git push settings. If the branch also has other unpushed commits, it stops and says so, so other work is never sent.
 
 The developer pulls, and their coding agent:
 - **lists** the open comments: `--reviews`

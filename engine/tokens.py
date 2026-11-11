@@ -544,7 +544,7 @@ class Design:
             if bare.startswith("--"):
                 out.append(bare)  # a CSS custom property
             elif code:
-                segs = [x for x in re.split(r"[.\[\]'\"\s/]+", code) if x]
+                segs = [x for x in re.split(r"[.\[\]'\"\s/()]+", code) if x]  # getColor('on-primary') -> on-primary
                 if segs:
                     out.append(segs[-1])  # colors['on-primary'] -> on-primary
             out.append(key)

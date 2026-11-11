@@ -165,6 +165,66 @@ class Helper(unittest.TestCase):
         files = git(self.tmp / "remote.git", "show", "--name-only", "--format=", "main").splitlines()
         self.assertEqual(files, [f"design-canvas/reviews/{h.me['slug']}.json"])
 
+    def test_push_settings_cannot_widen_or_force_end_review(self):
+        alex = self.clone("alex", "Alex")
+        git(alex, "switch", "-q", "-c", "side")
+        (alex / "SIDE.md").write_text("alex's branch\n", encoding="utf-8")
+        git(alex, "add", "SIDE.md")
+        git(alex, "commit", "-qm", "alex side")
+        git(alex, "push", "-q", "origin", "side")
+        alex_side = git(alex, "rev-parse", "HEAD")
+        git(self.sam, "fetch", "-q")
+        git(self.sam, "switch", "-q", "-c", "side", "main")  # diverges from the remote's side: pushing it needs a force
+        (self.sam / "SIDE.md").write_text("sam's other work\n", encoding="utf-8")
+        git(self.sam, "add", "SIDE.md")
+        git(self.sam, "commit", "-qm", "sam side")
+        git(self.sam, "switch", "-q", "main")
+        git(self.sam, "tag", "-a", "v9", "-m", "a local tag")
+        git(self.sam, "config", "push.default", "matching")
+        git(self.sam, "config", "push.followTags", "true")
+        git(self.sam, "config", "remote.origin.push", "+refs/heads/*:refs/heads/*")
+        h = self.start(self.sam)
+        self.api(h, "save", {"comments": [self.comment(h)], "updates": []})
+        r = self.api(h, "end-review", {})[1]
+        self.assertTrue(r["ok"], r)
+        remote = self.tmp / "remote.git"
+        self.assertEqual(git(remote, "rev-parse", "side"), alex_side, "another branch was neither pushed nor forced")
+        self.assertEqual(git(remote, "tag"), "", "no tags were pushed")
+        self.assertEqual(git(remote, "show", "--name-only", "--format=", "main").splitlines(), [f"design-canvas/reviews/{h.me['slug']}.json"])
+
+    def test_unpushed_merge_commit_that_adds_a_file_is_caught(self):
+        h = self.start(self.sam)
+        git(self.sam, "switch", "-q", "-c", "x")
+        self.api(h, "save", {"comments": [self.comment(h)], "updates": []})
+        rel = f"design-canvas/reviews/{h.me['slug']}.json"
+        git(self.sam, "add", "--", rel)
+        git(self.sam, "commit", "-qm", "review only")
+        git(self.sam, "switch", "-q", "main")
+        git(self.sam, "merge", "-q", "--no-ff", "--no-commit", "x")
+        (self.sam / "EXTRA.md").write_text("slipped into the merge\n", encoding="utf-8")
+        git(self.sam, "add", "EXTRA.md")
+        git(self.sam, "commit", "-qm", "merge x")
+        before = git(self.tmp / "remote.git", "rev-parse", "main")
+        r = self.api(h, "end-review", {})[1]
+        self.assertFalse(r["ok"])
+        self.assertIn("EXTRA.md", r["message"])
+        self.assertEqual(git(self.tmp / "remote.git", "rev-parse", "main"), before)
+
+    def test_retry_works_in_a_folder_with_an_accent(self):
+        git(self.sam, "mv", "design-canvas", "café")
+        git(self.sam, "commit", "-qm", "rename")
+        git(self.sam, "push", "-q")
+        d = Design(self.sam / "café")
+        server, h = serve.start(d, d.root, 0, False, None, build.build_all, build.script_json)
+        self.servers.append(server)
+        self.api(h, "save", {"comments": [self.comment(h)], "updates": []})
+        rel = f"café/reviews/{h.me['slug']}.json"
+        git(self.sam, "add", "--", rel)
+        git(self.sam, "commit", "-qm", "review committed, but its push failed")  # what End review leaves after a failed push
+        r = self.api(h, "end-review", {})[1]
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(git(self.tmp / "remote.git", "show", "-z", "--name-only", "--format=", "main").strip("\0\n"), rel)
+
     def test_remote_moved_with_other_changes_explains_then_combines_once_clean(self):
         h = self.start(self.sam)
         alex = self.clone("alex", "Alex")

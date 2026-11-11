@@ -128,6 +128,15 @@ class DriftCheck(unittest.TestCase):
                          {"tailwind.config.js": tw})
         self.assertEqual(len(bad[0]), 1, "#3B5BFD belongs to primary on the line above, not 'on-primary'")
 
+    def test_code_written_as_a_call(self):
+        ts = ("export const palette = {\n  primary: '#3B5BFD',\n  onPrimary: '#FFFFFF',\n}\n"
+              "export const useBrand = () => ({\n  accent: palette.primary,\n  ink: '#3B5BFD',\n})\n")
+        meta = {"code": "getColor('onPrimary')", "src": "theme.ts:3"}
+        ok = self.check({"colors": {"onPrimary": {"value": "#FFFFFF", **meta}}}, {"theme.ts": ts})
+        self.assertEqual((ok[0], ok[1]), ([], 1))
+        bad = self.check({"colors": {"onPrimary": {"value": "#3B5BFD", **meta}}}, {"theme.ts": ts})
+        self.assertEqual(len(bad[0]), 1, "'() =>' nearby must not be taken for the token's definition")
+
     def test_css_custom_properties(self):
         css = ":root {\n  --color-primary: #3b5bfd;\n  --color-on-primary: #ffffff;\n  --space-md: 12px;\n}\n"
         res = self.check({"colors": {"primary": {"value": "#3B5BFD", "code": "--color-primary", "src": "app.css:2"}},
