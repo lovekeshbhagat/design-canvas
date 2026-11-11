@@ -358,6 +358,66 @@ class Helper(unittest.TestCase):
         self.assertFalse(r["ok"], r)
         self.assertEqual(git(self.tmp / "remote.git", "rev-parse", "main"), before)
 
+    def test_a_submodule_change_is_caught_even_with_ignore_all(self):
+        seed_sha = git(self.sam, "rev-parse", "HEAD")
+        (self.sam / ".gitmodules").write_text('[submodule "vendor/lib"]\n\tpath = vendor/lib\n\turl = ./lib.git\n'
+                                              "\tignore = all\n", encoding="utf-8")
+        git(self.sam, "add", ".gitmodules")
+        git(self.sam, "update-index", "--add", "--cacheinfo", f"160000,{seed_sha},vendor/lib")
+        git(self.sam, "commit", "-qm", "add a submodule")
+        git(self.sam, "push", "-q")
+        h = self.start(self.sam)
+        self.api(h, "save", {"comments": [self.comment(h)], "updates": []})
+        git(self.sam, "add", "--", f"design-canvas/reviews/{h.me['slug']}.json")
+        git(self.sam, "update-index", "--cacheinfo", f"160000,{'1' * 40},vendor/lib")
+        git(self.sam, "commit", "-qm", "wip")  # the review file and a submodule move in one commit
+        before = git(self.tmp / "remote.git", "rev-parse", "main")
+        r = self.api(h, "end-review", {})[1]
+        self.assertFalse(r["ok"], r)
+        self.assertIn("vendor/lib", r["message"])
+        self.assertEqual(git(self.tmp / "remote.git", "rev-parse", "main"), before)
+
+    def test_a_grafts_file_is_refused(self):
+        (self.sam / ".git" / "info").mkdir(exist_ok=True)
+        (self.sam / ".git" / "info" / "grafts").write_text("", encoding="utf-8")
+        self.refused(self.start(self.sam), "grafts")
+
+    def test_a_folder_name_with_glob_characters_is_taken_literally(self):
+        git(self.sam, "mv", "design-canvas", "ui[1]")
+        git(self.sam, "commit", "-qm", "rename")
+        git(self.sam, "push", "-q")
+        d = Design(self.sam / "ui[1]")
+        server, h = serve.start(d, d.root, 0, False, None, build.build_all, build.script_json)
+        self.servers.append(server)
+        decoy = self.sam / "ui1" / "reviews" / f"{h.me['slug']}.json"
+        decoy.parent.mkdir(parents=True)
+        decoy.write_text("{}", encoding="utf-8")  # matches ui[1]/... if the path were read as a glob
+        self.api(h, "save", {"comments": [self.comment(h)], "updates": []})
+        r = self.api(h, "end-review", {})[1]
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(git(self.tmp / "remote.git", "show", "--name-only", "--format=", "main").splitlines(),
+                         [f"ui[1]/reviews/{h.me['slug']}.json"])
+
+    def test_get_latest_never_stashes_or_rebases(self):
+        for name, settings in (("s1", {"pull.rebase": "true", "rebase.autoStash": "true"}),
+                               ("s2", {"pull.rebase": "false", "merge.autoStash": "true"})):
+            with self.subTest(settings=settings):
+                me = self.clone(name, "Sam")
+                for k, v in settings.items():
+                    git(me, "config", k, v)
+                alex = self.clone(name + "-alex", "Alex")
+                theme_a = alex / "design-canvas" / "app" / "src" / "theme.ts"
+                theme_a.write_text(theme_a.read_text(encoding="utf-8") + "// alex\n", encoding="utf-8")
+                git(alex, "commit", "-qam", "alex theme")
+                git(alex, "push", "-q")
+                theme = me / "design-canvas" / "app" / "src" / "theme.ts"
+                theme.write_text(theme.read_text(encoding="utf-8") + "// my unsaved edit\n", encoding="utf-8")
+                r = self.api(self.start(me), "get-latest", {})[1]
+                self.assertFalse(r["ok"], r)
+                self.assertIn("Commit or stash them first", r["message"])
+                self.assertEqual(git(me, "stash", "list"), "", "nothing was stashed")
+                self.assertIn("// my unsaved edit", theme.read_text(encoding="utf-8"))
+
     def test_ssh_always_runs_in_batch_mode(self):
         git(self.sam, "config", "core.sshCommand", "ssh -i ~/.ssh/other_key")
         self.assertEqual(self.start(self.sam).ssh, "ssh -i ~/.ssh/other_key -o BatchMode=yes")

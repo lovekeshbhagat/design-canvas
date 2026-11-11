@@ -119,8 +119,8 @@ Review files come from other people, and coding agents read them, so:
 - **The check.** Before committing, End review does four things:
   1. It asks the remote where this branch is now (`git ls-remote --heads`) and fetches it. For a branch the remote doesn't have yet, all of the remote's branches count.
   2. It lists every commit a push would add beyond that, ignoring replace refs.
-  3. It goes on only if each of those commits has exactly one parent and changes only your review file, compared byte for byte with git's own spelling of the path. A merge, an empty commit, or a commit that touches anything else stops it, and it says which commit.
-  4. It refuses a remote that has several addresses, or a push address that differs from the fetch address.
+  3. It goes on only if each of those commits has exactly one parent and changes only your review file, compared byte for byte with git's own spelling of the path. A merge, an empty commit, or a commit that touches anything else stops it, and it says which commit. A submodule pointer counts as a file, even when `.gitmodules` says `ignore = all`.
+  4. It refuses a remote that has several addresses, or a push address that differs from the fetch address. It also refuses a copy that has a grafts file, because grafts can hide commits.
 
   After committing, it checks the new commits against the same answer.
 - **What End review pushes:** exactly the commit it checked, to this branch's remote branch: `git push --no-follow-tags --no-recurse-submodules --no-signed <remote> <commit>:<remote branch>`.
@@ -131,7 +131,7 @@ Review files come from other people, and coding agents read them, so:
 - **A limit:** the check reflects the remote at that moment. If someone rewinds the branch in the seconds between the check and the push, the push can put back what they removed.
 - **No prompts:** git runs with its input closed, in its own session (no terminal on macOS and Linux), with terminal prompts, askpass and credential prompts off. ssh gets `BatchMode=yes` unless your own ssh command already sets BatchMode. A custom `GIT_SSH` program or plink is left as it is, with no terminal on macOS and Linux. A password manager, system keychain or ssh agent can still show its own dialog.
 - **Never:** it never force-pushes and never auto-stashes.
-- **Get latest:** `git pull --ff-only`, then rebuilds the pages.
+- **Get latest:** `git pull --ff-only --no-rebase --no-autostash`, then rebuilds the pages. It never rebases or stashes, whatever your pull settings say.
 
 ## Commands
 

@@ -123,7 +123,7 @@ Open the link it prints; only your computer can open it. Then:
 2. **End review** sends your comments: it commits only your review file and pushes it.
 3. **Get latest** shows what the developer changed.
 
-Your name comes from git (`git config user.name`), or pass `--as "Your Name"`. If the branch is protected, switch to a review branch (`git switch -c review/your-name`) and open a pull request after End review.
+Your name comes from git (`git config user.name`), or pass `--as "Your Name"`. If the branch is protected, switch to a review branch (`git switch --no-track -c review/your-name`) and open a pull request after End review.
 
 No git? Open `design-canvas/out/canvas.html` directly, comment, then use **Download review file** and send it to the developer.
 

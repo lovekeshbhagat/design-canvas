@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import shlex
 import subprocess
 import sys
 import threading
@@ -66,7 +67,11 @@ class Helper:
             p = self._run(["git", "config", "core.sshCommand"], cwd=self.repo)
             cmd = p.stdout.strip() if p else ""
         if cmd:
-            prog = os.path.basename(cmd.split()[0].strip("'\"")).lower()
+            try:
+                first = shlex.split(cmd)[0]
+            except (ValueError, IndexError):
+                first = cmd.split()[0]
+            prog = os.path.basename(first.replace("\\", "/")).lower()
             return cmd if prog.startswith(("plink", "tortoiseplink")) else cmd + " -o BatchMode=yes"
         return None if os.environ.get("GIT_SSH") else "ssh -o BatchMode=yes"
 
@@ -80,18 +85,19 @@ class Helper:
         return env
 
     @staticmethod
-    def _run(cmd, cwd=None, env=None, timeout=60, input=None):
+    def _run(cmd, cwd=None, env=None, timeout=60, input=None, errors="replace"):
         """Run without a terminal: stdin closed (or fed `input`) and, on macOS/Linux, in a new session."""
         try:
             return subprocess.run(cmd, cwd=str(cwd) if cwd else None, env=env, capture_output=True, text=True,
-                                  encoding="utf-8", errors="replace", timeout=timeout, input=input,
+                                  encoding="utf-8", errors=errors, timeout=timeout, input=input,
                                   stdin=subprocess.DEVNULL if input is None else None, start_new_session=os.name != "nt")
         except (OSError, subprocess.SubprocessError):
             return None
 
-    def git(self, *args, timeout=60, input=None):
+    def git(self, *args, timeout=60, input=None, errors="replace"):
+        """Run git in the repo. errors="surrogateescape" keeps paths that aren't valid UTF-8 distinct, byte for byte."""
         p = self._run(["git", "-c", "credential.interactive=false", *args], cwd=self.repo, env=self._env(), timeout=timeout,
-                      input=input)
+                      input=input, errors=errors)
         if p is None:
             return subprocess.CompletedProcess(args, 1, "", "git did not finish (timed out or could not start)")
         return p
@@ -171,13 +177,17 @@ class Helper:
 
     def _git_path(self, rel: str) -> str:
         """The review file's path exactly as git spells it, so a look-alike Unicode spelling counts as another file."""
-        p = self.git("--literal-pathspecs", "ls-files", "-z", "--cached", "--others", "--full-name", "--", rel)
+        p = self.git("--literal-pathspecs", "ls-files", "-z", "--cached", "--others", "--full-name", "--", rel,
+                     errors="surrogateescape")
         names = [x for x in p.stdout.split("\0") if x] if p.returncode == 0 else []
         return names[0] if len(names) == 1 else rel
 
     def _outgoing(self, tips: list, want: str):
         """(None, sha of HEAD) when every commit a push of HEAD would add, beyond `tips`, has one parent and changes only
         the path `want` (byte for byte). Otherwise (why not, None). Replace refs are ignored, so they can't hide a commit."""
+        grafts = self.git("rev-parse", "--git-path", "info/grafts").stdout.strip()
+        if grafts and ((self.repo / grafts) if not os.path.isabs(grafts) else Path(grafts)).exists():
+            return "this copy has a grafts file (info/grafts), which can hide commits", None
         head = self.git("rev-parse", "--verify", "-q", "HEAD^{commit}").stdout.strip()
         revs = self.git("--no-replace-objects", "rev-list", "--parents", "--max-count=201", "--stdin",
                         input=head + "\n" + "".join(f"^{t}\n" for t in tips)) if head else None
@@ -190,7 +200,8 @@ class Helper:
             c, *parents = line.split()
             if len(parents) != 1:
                 return f"commit {c[:7]} is a merge or a first commit", None
-            d = self.git("--no-replace-objects", "diff-tree", "--no-commit-id", "--no-renames", "-r", "-z", "--name-only", c)
+            d = self.git("--no-replace-objects", "diff-tree", "--no-commit-id", "--no-renames", "--ignore-submodules=none",
+                         "-r", "-z", "--name-only", c, errors="surrogateescape")
             files = {x for x in d.stdout.split("\0") if x}
             if d.returncode != 0 or files != {want}:
                 other = sorted(files - {want})
@@ -254,8 +265,9 @@ class Helper:
             if st["unsent"]:
                 c, u = reviews.read_mine(self.d.dir, self.me)
                 msg = f"design-canvas: review by {self.me['name']} ({len(c)} comments, {len(u)} updates)"
-                add = self.git("add", "--", rel)
-                cm = self.git("-c", "commit.gpgsign=false", "commit", "--no-verify", "--only", "-m", msg, "--", rel) if add.returncode == 0 else add
+                add = self.git("--literal-pathspecs", "add", "--", rel)
+                cm = self.git("--literal-pathspecs", "-c", "commit.gpgsign=false", "commit", "--no-verify", "--only", "-m", msg,
+                              "--", rel) if add.returncode == 0 else add
                 if cm.returncode != 0:
                     return {"ok": False, "message": "Couldn't commit your review file: " + _say(cm.stderr or cm.stdout), "git": self.git_state()}
                 committed = True
@@ -272,7 +284,7 @@ class Helper:
             kept = " Your comments are saved and committed on this computer." if committed or not st["unsent"] else ""
             if "protected" in err or "denied" in err or "declined" in err or "pre-receive hook" in err:
                 return {"ok": False, "message": "The remote refused this branch (it may be protected). Switch to a review branch "
-                        "(git switch -c review/your-name), press End review again, then open a pull request." + kept, "git": self.git_state()}
+                        "(git switch --no-track -c review/your-name), press End review again, then open a pull request." + kept, "git": self.git_state()}
             if "authentication" in err or "could not read" in err or "permission" in err or "terminal prompts disabled" in err or "publickey" in err:
                 return {"ok": False, "message": "git couldn't sign in to the remote from here. Push once from a terminal "
                         "(or set up your git credentials), then try again." + kept, "git": self.git_state()}
@@ -311,7 +323,7 @@ class Helper:
             if problem:
                 return {"ok": False, "message": problem, "git": st}
             before = self.git("rev-parse", "HEAD").stdout.strip()
-            pull = self.git("pull", "--ff-only", timeout=120)
+            pull = self.git("pull", "--ff-only", "--no-rebase", "--no-autostash", timeout=120)
             if pull.returncode != 0:
                 err = (pull.stderr or pull.stdout).lower()
                 if "would be overwritten" in err or "your local changes" in err:
