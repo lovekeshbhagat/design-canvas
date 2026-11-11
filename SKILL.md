@@ -1,6 +1,7 @@
 ---
 name: design-canvas
-description: Turn any app's real code into a living design guide (tokens, components, contrast and drift checks) and a pan-and-zoom canvas of every screen that agents can keep drawing on. Use when the user asks for a design guide, design system docs, a style guide, a token export, a "Figma-like" board of their screens, or a check that their design tokens still match the code.
+description: Design guide, design system docs, style guide, design tokens, a "Figma-like" board of every screen, or applying a designer's review. Reads the app's real code into one design.json, then builds a living design guide (tokens, components, contrast and drift checks) and a pan-and-zoom canvas of every screen that designers can inspect and comment on. Use when the user asks for any of these, or to check that design tokens still match the code.
+compatibility: Requires Python 3.9+ (standard library only). No network access needed.
 ---
 
 # design-canvas
@@ -11,6 +12,8 @@ You read an app's code, write one standard file (`design.json`), and the engine 
 - `out/tokens.json`: design tokens in the DTCG 2025.10 format, one file per theme, plus `out/tokens.md`.
 
 The engine is `engine/build.py` in this skill's folder (Python 3.9+, standard library only). It builds everything from `design.json`. It only goes back to the code to re-check each token's `src` line (`--check`) and to scan JS/TS imports for "Used in" lists. Finding the design system in the code is your job.
+
+**Running it.** In the commands below, `<skill>` is the folder that holds this SKILL.md. Use `python3`; on Windows it may be `python` or `py -3`. Every command also takes `--json` for machine-readable output. Write paths with forward slashes. If your environment offers the design-canvas MCP tools (`design_canvas_validate`, `_check`, `_build`, `_reviews`, `_resolve`), you can call them instead of the commands. They take the design folder as `dir` and return the same JSON.
 
 ## Where the files go
 
@@ -45,6 +48,7 @@ design-canvas/
    python3 <skill>/engine/build.py design-canvas
    ```
    Open `out/guide.html` and `out/canvas.html` in a browser. Check every theme, every specimen and every screen against the code (or a screenshot of the real app when you have one). The build prints missing specimens, screens, contrast issues and drift; fix them.
+   **No browser?** Rely on the build output and `--validate --json` (missing screens, specimens, contrast and drift), and ask the user to open the two pages and tell you what looks wrong.
 
 ## Apply a designer's review
 

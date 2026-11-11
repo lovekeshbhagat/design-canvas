@@ -25,7 +25,7 @@ def make(tmp: Path, design: dict, files: dict[str, str]) -> Design:
     for rel, text in files.items():
         f = tmp / "app" / rel
         f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(text)
+        f.write_text(text, encoding="utf-8")
     base = {"version": 1, "app": {"name": "Test", "root": "../app"}, "roles": {"background": "bg", "text": "text"},
             "colors": {"bg": {"value": "#FFFFFF", "derived": "test"}, "text": {"value": "#111111", "derived": "test"}}}
     for k, v in design.items():
@@ -33,7 +33,7 @@ def make(tmp: Path, design: dict, files: dict[str, str]) -> Design:
             base[k] = {**base[k], **v}
         else:
             base[k] = v
-    (tmp / "design" / "design.json").write_text(json.dumps(base))
+    (tmp / "design" / "design.json").write_text(json.dumps(base), encoding="utf-8")
     return Design(tmp / "design")
 
 
@@ -120,6 +120,11 @@ class DriftCheck(unittest.TestCase):
         bad = self.check({"colors": {"primary": {"value": "#FFFFFF", "code": "--color-primary", "src": "app.css:2"}}}, {"app.css": css})
         self.assertEqual(len(bad[0]), 1, "#ffffff sits on the next line (on-primary) but is not --color-primary")
 
+    def test_src_outside_the_app_root_is_refused(self):
+        for bad in ("/etc/hosts:1", "../outside.ts:1"):
+            res = self.check({"colors": {"primary": {"value": "#3B5BFD", "src": bad}}}, {"x.ts": ""})
+            self.assertIn("inside the app root", res[0][0])
+
     def test_missing_source_file(self):
         res = self.check({"colors": {"primary": {"value": "#3B5BFD", "src": "nope.ts:3"}}}, {"x.ts": ""})
         self.assertIn("source file not found", res[0][0])
@@ -150,9 +155,9 @@ class Sample(unittest.TestCase):
                 self.assertEqual(build.main([str(SAMPLE), "--out", str(out)]), 0)
             for f in ("guide.html", "canvas.html", "tokens.json", "tokens.dark.json", "tokens.md"):
                 self.assertTrue((out / f).exists(), f)
-            tokens = json.loads((out / "tokens.json").read_text())
+            tokens = json.loads((out / "tokens.json").read_text(encoding="utf-8"))
             self.assertEqual(tokens["color"]["primary"]["$value"]["hex"], "#3b5bfd")
-            self.assertNotIn("missing frames", (out / "canvas.html").read_text())
+            self.assertNotIn("missing frames", (out / "canvas.html").read_text(encoding="utf-8"))
         finally:
             shutil.rmtree(out)
 

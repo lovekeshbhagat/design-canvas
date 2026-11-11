@@ -11,6 +11,8 @@ import json
 import re
 from pathlib import Path
 
+from reviews import safe_rel
+
 ROLES = ["background", "surface", "surface2", "text", "textMuted", "accent", "onAccent", "border", "danger", "scrim"]
 ROLE_VAR = {"background": "bg", "surface": "surface", "surface2": "surface-2", "text": "text", "textMuted": "muted",
             "accent": "accent", "onAccent": "on-accent", "border": "border", "danger": "danger", "scrim": "scrim"}
@@ -478,6 +480,8 @@ class Design:
             for part in [s.strip() for s in src.split(",") if s.strip()]:
                 m = re.match(r"(.+?)(?::(\d+))?$", part)
                 path, line = m.group(1), m.group(2)
+                if not safe_rel(root, path):
+                    return None, f"src must be a relative path inside the app root: {path}"
                 f = (root / path)
                 if path not in cache:
                     try:

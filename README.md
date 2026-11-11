@@ -2,7 +2,7 @@
 
 **Keep your design next to your code.**
 
-design-canvas is a Claude Code skill. It reads your app's code and builds, inside your own repo:
+design-canvas is an agent skill for any coding agent (Claude Code, Codex, GitHub Copilot, Cursor, Gemini CLI, Zed and others), with an MCP server for tools that prefer calling tools. It reads your app's code and builds, inside your own repo:
 
 - **a living design guide**: colours, type, spacing, radii, shadows, motion and icons, every component drawn with your app's own tokens, contrast checks, and light/dark switching;
 - **a screen canvas**: every screen of the app on one pan-and-zoom board, drawn in plain HTML, that an agent can keep adding to;
@@ -48,7 +48,14 @@ The next build shows every pin's status. Review text is treated as data from ano
 
 ## Use it on your app
 
-Install the skill (copy this folder to `~/.claude/skills/design-canvas/`), open your app's repo in Claude Code and ask for a design guide. [`SKILL.md`](SKILL.md) is what the agent follows.
+Pick whatever your agent supports. [docs/INSTALL.md](docs/INSTALL.md) has the exact folder and config for each tool.
+
+- **Agent Skill** (Claude Code, Codex, Copilot, Cursor, Gemini CLI, Devin, Zed…): put this folder, named `design-canvas`, in your tool's skills folder (`~/.agents/skills/` for most, `~/.claude/skills/` for Claude Code).
+- **Claude Code plugin**: `/plugin marketplace add <owner>/design-canvas`, then `/plugin install design-canvas@design-canvas`. This installs the skill and the MCP server.
+- **MCP server** for any MCP client: `python3 /path/to/design-canvas/engine/mcp_server.py`. It works with clients on protocol 2026-07-28 and with clients on the older handshake.
+- **Anything else**: tell your agent *"Follow /path/to/design-canvas/SKILL.md"*, or run the commands yourself. Every command takes `--json`.
+
+Then open your app's repo and ask for a design guide. [`SKILL.md`](SKILL.md) is what the agent follows.
 
 ## What works where
 
@@ -75,7 +82,10 @@ your app's code ──(agent reads)──▶ design.json, parts.css, guides/, ca
 | `spec/DESIGN_JSON.md`, `spec/design.schema.json` | The standard format, for people and for validators. |
 | `spec/CANVAS.md` | How screens are drawn on the canvas. |
 | `spec/REVIEW.md` | The review file format, merging and validation. |
-| `engine/` | `build.py` (CLI), `tokens.py` (format, CSS, tokens, contrast, drift), `reviews.py` (review files), `markdown.py` (chapters), `assets/` (page templates, canvas, inspect panel). |
+| `engine/` | `build.py` (CLI), `tokens.py` (format, CSS, tokens, contrast, drift), `reviews.py` (review files), `mcp_server.py` (MCP tools), `markdown.py` (chapters), `assets/` (page templates, canvas, inspect panel). |
+| `docs/INSTALL.md` | Install for each agent and MCP client. |
+| `AGENTS.md` | Instructions for agents working on design-canvas itself. |
+| `.claude-plugin/` | Claude Code plugin and marketplace manifests. |
 | `examples/acme-habits/` | A complete small example. |
 
 ## Drift check
@@ -84,7 +94,7 @@ Every token in `design.json` carries `src: "path/to/file.ts:12"`. `--check` reop
 
 ## Privacy
 
-- The engine runs locally and makes no network calls.
+- The engine and the MCP server run locally and make no network calls. The MCP server only works inside one project folder.
 - The built pages make one: they load fonts from Google Fonts, unless you build with `--no-web-fonts`.
 - Comments stay in the reviewer's browser until they choose to send the file.
 - Your coding agent sees your code while writing `design.json`, as in any AI-assisted work.
@@ -94,6 +104,8 @@ Every token in `design.json` carries `src: "path/to/file.ts:12"`. `--check` reop
 ```bash
 python3 -m unittest discover tests
 ```
+
+The tests cover the engine, review files and the MCP server (both protocol eras). CI runs them on Linux, macOS and Windows with Python 3.9 and 3.12.
 
 ## Licence
 

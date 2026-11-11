@@ -446,7 +446,16 @@ def build_canvas(d: Design, root: Path | None = None, comments=None, web_fonts: 
 
 
 # ---------------------------------------------------------------- CLI
+def plain(msg: str) -> str:
+    return msg.replace("`", "")
+
+
 def main(argv=None) -> int:
+    for stream in (sys.stdout, sys.stderr):  # Windows consoles default to a legacy code page
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser(description="Build a design guide + screen canvas from design.json")
     ap.add_argument("dir", help="folder that holds design.json")
     ap.add_argument("--check", action="store_true", help="drift check only; exit 1 on drift")
@@ -458,43 +467,51 @@ def main(argv=None) -> int:
     ap.add_argument("--resolve", metavar="ID", help="set the status of one review comment")
     ap.add_argument("--status", default="resolved", help="with --resolve: " + " | ".join(reviews.STATUSES))
     ap.add_argument("--note", default="", help="with --resolve: one line on what changed (or why not)")
+    ap.add_argument("--json", action="store_true", help="print machine-readable JSON instead of text")
     a = ap.parse_args(argv)
+
+    def emit(obj, text_lines, code):
+        if a.json:
+            print(json.dumps(obj, indent=2, ensure_ascii=False))
+        else:
+            for ln in text_lines:
+                print(ln)
+        return code
+
     d = Design(Path(a.dir))
     root = Path(a.root).resolve() if a.root else d.root
-    for w in d.warnings:
-        print("warning:", w)
     if d.errors:
-        for e in d.errors:
-            print("error:", e)
-        print(f"design.json: {len(d.errors)} error(s)")
-        return 1
+        return emit({"ok": False, "errors": d.errors, "warnings": d.warnings},
+                    [f"warning: {w}" for w in d.warnings] + [f"error: {e}" for e in d.errors] + [f"design.json: {len(d.errors)} error(s)"], 1)
     if a.check:
         if not root.is_dir():
-            print(f"app root not found: {root}")
-            return 2
+            return emit({"ok": False, "error": f"app root not found: {root}"}, [f"app root not found: {root}"], 2)
         problems, ok, skipped, unsourced = d.check(root)
-        for p in problems:
-            print("DRIFT:", p.replace("`", ""))
-        for u in unsourced:
-            print("NO SRC:", u, "(add a src, or mark it derived)")
-        print(f"drift check: {ok} ok, {len(problems)} drifted, {len(unsourced)} without src, {len(skipped)} derived (not checkable)")
-        return 1 if problems or unsourced else 0
+        return emit(
+            {"ok": not problems and not unsourced, "checked": ok, "drift": [plain(p) for p in problems], "unsourced": unsourced, "derived": skipped},
+            [f"DRIFT: {plain(p)}" for p in problems] + [f"NO SRC: {u} (add a src, or mark it derived)" for u in unsourced]
+            + [f"drift check: {ok} ok, {len(problems)} drifted, {len(unsourced)} without src, {len(skipped)} derived (not checkable)"],
+            1 if problems or unsourced else 0)
     if a.resolve:
-        print(reviews.resolve(d.dir, a.resolve, a.status, a.note))
-        return 0
+        try:
+            msg = reviews.resolve(d.dir, a.resolve, a.status, a.note)
+        except reviews.ReviewError as e:
+            return emit({"ok": False, "error": str(e)}, [f"error: {e}"], 2)
+        return emit({"ok": True, "result": msg}, [msg], 0)
     comments, review_files, review_errors = reviews.load(d.dir)
     if a.reviews:
         _, _, _, screens = build_canvas(d, root)
+        if a.json:
+            return emit(reviews.report_json(comments, screens, d.known_tokens(), review_files, review_errors), [], 0)
         print(reviews.report(comments, screens, d.known_tokens(), review_files, review_errors))
         return 0
     if a.validate:
         _, _, missing, _ = build_canvas(d, root, comments)
-        for e in review_errors:
-            print("review:", e)
-        for m in missing:
-            print("missing:", m)
-        print(f"design.json ok ({d.count()} tokens, {len(d.themes)} theme(s), {len(d.icons.get('items') or {})} icons)")
-        return 1 if missing else 0
+        summary = f"design.json ok ({d.count()} tokens, {len(d.themes)} theme(s), {len(d.icons.get('items') or {})} icons)"
+        return emit({"ok": not missing, "tokens": d.count(), "themes": len(d.themes), "icons": len(d.icons.get("items") or {}),
+                     "missing": missing, "reviewErrors": review_errors, "warnings": d.warnings},
+                    [f"warning: {w}" for w in d.warnings] + [f"review: {e}" for e in review_errors] + [f"missing: {m}" for m in missing] + [summary],
+                    1 if missing else 0)
     drift_result = d.check(root) if root.is_dir() else None
     usage = d.usage(root) if root.is_dir() else None
     web = not a.no_web_fonts
@@ -510,16 +527,20 @@ def main(argv=None) -> int:
         (out / f"tokens.{t}.json").write_text(json.dumps(d.dtcg(t), indent=2) + "\n", encoding="utf-8")
     (out / "tokens.md").write_text(d.markdown(drift_result[0] if drift_result else None), encoding="utf-8")
     drift_n = f"{len(drift_result[0])}, without src: {len(drift_result[3])}" if drift_result else "not run"
-    print(f"built {out}/guide.html ({len(guide) // 1024} KB)" + (f", canvas.html ({len(canvas) // 1024} KB, {n_frames} screens)" if canvas else "")
-          + f" · {d.count()} tokens · drift: {drift_n} · contrast issues: {len(d.contrast_problems())}")
+    c = reviews.counts(comments)
+    files = ["guide.html"] + (["canvas.html"] if canvas else []) + ["tokens.json"] + [f"tokens.{t}.json" for t in d.theme_ids[1:]] + ["tokens.md"]
+    lines = [f"built {out}/guide.html ({len(guide) // 1024} KB)" + (f", canvas.html ({len(canvas) // 1024} KB, {n_frames} screens)" if canvas else "")
+             + f" · {d.count()} tokens · drift: {drift_n} · contrast issues: {len(d.contrast_problems())}"]
     if comments or review_errors:
-        c = reviews.counts(comments)
-        print(f"reviews: {c['open'] + c['question'] + c['reopened']} open, {c['resolved'] + c['wontfix']} closed, from {len(review_files)} file(s)")
-    for m in missing + guide_missing:
-        print("missing:", m)
-    for e in review_errors:
-        print("review:", e)
-    return 0
+        lines.append(f"reviews: {c['open'] + c['question'] + c['reopened']} open, {c['resolved'] + c['wontfix']} closed, from {len(review_files)} file(s)")
+    lines += [f"missing: {m}" for m in missing + guide_missing] + [f"review: {e}" for e in review_errors]
+    return emit({
+        "ok": True, "out": str(out), "files": files, "screens": n_frames, "tokens": d.count(),
+        "drift": [plain(p) for p in drift_result[0]] if drift_result else None,
+        "unsourced": drift_result[3] if drift_result else None,
+        "contrastIssues": [plain(p) for p in d.contrast_problems()], "reviews": c,
+        "missing": missing + guide_missing, "reviewErrors": review_errors, "warnings": d.warnings,
+    }, [f"warning: {w}" for w in d.warnings] + lines, 0)
 
 
 if __name__ == "__main__":

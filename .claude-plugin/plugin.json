@@ -1,0 +1,27 @@
+{
+  "name": "design-canvas",
+  "version": "0.1.0",
+  "description": "Turn an app's code into a living design guide and a canvas of every screen that designers can inspect and comment on, with a drift check and a review loop.",
+  "author": {
+    "name": "design-canvas authors"
+  },
+  "license": "MIT",
+  "keywords": [
+    "design-system",
+    "design-tokens",
+    "style-guide",
+    "design-review",
+    "canvas"
+  ],
+  "skills": [
+    "./"
+  ],
+  "mcpServers": {
+    "design-canvas": {
+      "command": "python3",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/engine/mcp_server.py"
+      ]
+    }
+  }
+}

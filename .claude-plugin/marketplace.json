@@ -1,0 +1,17 @@
+{
+  "name": "design-canvas",
+  "owner": {
+    "name": "design-canvas"
+  },
+  "description": "design-canvas: a living design guide and screen canvas built from your app's code.",
+  "plugins": [
+    {
+      "name": "design-canvas",
+      "source": "./",
+      "description": "Living design guide and screen canvas from your app's code, with designer inspect, comments and review files.",
+      "author": {
+        "name": "design-canvas authors"
+      }
+    }
+  ]
+}
