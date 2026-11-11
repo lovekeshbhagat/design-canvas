@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -26,9 +27,20 @@ SAMPLE = ROOT / "examples" / "acme-habits"
 
 
 def git(cwd, *args):
-    p = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True)
+    p = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, encoding="utf-8")
     assert p.returncode == 0, p.stderr
     return p.stdout.strip()
+
+
+def remove_tree(path):
+    """shutil.rmtree that also deletes git's read-only object files on Windows."""
+    def make_writable_and_retry(func, p, _):
+        os.chmod(p, stat.S_IWRITE)
+        func(p)
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=make_writable_and_retry)
+    else:
+        shutil.rmtree(path, onerror=make_writable_and_retry)
 
 
 class Helper(unittest.TestCase):
@@ -58,7 +70,7 @@ class Helper(unittest.TestCase):
             s.server_close()
         os.environ.clear()
         os.environ.update(self.env)
-        shutil.rmtree(self.tmp)
+        remove_tree(self.tmp)
 
     def clone(self, name, person):
         git(self.tmp, "clone", "-q", "remote.git", name)
