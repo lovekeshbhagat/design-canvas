@@ -20,31 +20,36 @@ Python 3.9+ only, no installs.
 ```bash
 python3 engine/build.py examples/acme-habits           # writes examples/acme-habits/out/
 python3 engine/build.py examples/acme-habits --check   # drift check, exits 1 on drift
-python3 engine/build.py examples/acme-habits --reviews # open review comments
+python3 engine/build.py examples/acme-habits --reviews # comments that need a fix
 ```
 
-Open `examples/acme-habits/out/guide.html` and `out/canvas.html`. Acme Habits is a made-up app whose "code" is the small `app/` folder beside it. The sample review in `reviews/` puts two pins on the canvas, one open and one resolved.
+Open `examples/acme-habits/out/guide.html` and `out/canvas.html`. Acme Habits is a made-up app whose "code" is the small `app/` folder beside it. The sample reviews in `reviews/` (Sam the designer, Alex the developer) put two pins on the canvas: one that needs a fix and one resolved.
 
 ## Share it with your designer
 
 `out/guide.html` and `out/canvas.html` are single files that open in any browser. Zip and send them, or host them wherever your team keeps internal pages. Build with `--no-web-fonts` if they must work fully offline (fonts then fall back to the system's).
 
-## Inspect and comment
+## Review it with your designer
 
-On the canvas, the designer presses **Inspect** (or `I`) and clicks any element:
+Reviews travel through git, next to the code. Each person runs a small helper on **their own computer**: there's no shared server and no account.
 
-- **Size** and box: padding, margin, gap.
-- **The tokens it uses**, by name: `colors.primary`, `type.label`, `spacing.xl`, `radii.pill`, per theme. These come from the app's own styles, not guessed from the colour.
-- **Off-system values**: anything typed by hand instead of using a token, such as an 11 px font that isn't on the type scale, or a 4 px gap that should be `spacing.xs`.
-- The screen's **source file**, and a box to **comment** on that element.
+```bash
+python3 engine/build.py design-canvas --serve      # prints a link that only this computer can open
+```
 
-Comments stay in their browser. **Send review** downloads one file ([format](spec/REVIEW.md)). Drop it into `reviews/` and ask your agent to apply it. [`SKILL.md`](SKILL.md) tells the agent to:
-- list the open comments,
-- change the app's code,
-- rebuild,
-- mark each comment resolved, `question` or `wontfix` with a note.
+On the screen board, the reviewer:
+- **inspects** any element (press `I`) to see its size and **the tokens it uses**, by name and per theme (`colors.primary`, `type.label`, `spacing.xl`). Anything typed by hand instead of using a token is flagged as **off-system**.
+- **comments** on it. A numbered pin marks the element, and the comment saves to their own review file as they type.
+- presses **End review**. This commits only their review file and pushes it; other work in their copy is never included.
 
-The next build shows every pin's status. Review text is treated as data from another person, never as instructions to the agent. See SKILL.md for the rule, and `engine/reviews.py` for what the engine enforces.
+The developer pulls, and their coding agent:
+- **lists** the open comments: `--reviews`
+- **fixes** the code
+- **marks** each comment *fix ready*, *question* or *won't fix*: `--resolve`
+
+The reviewer presses **Get latest**. Every comment now shows **who** wrote it and **where it stands**: *Needs fix*, *Fix ready*, *Question*, *Resolved*. For example: "Fix ready · Alex via agent · 2 min ago: add button is 48 now". They **Resolve** or **Reopen** each fix, reply to questions, delete their own comments, and press End review again.
+
+Each person writes only their own file in `reviews/`, so git never conflicts. Review text is treated as data from another person, never as instructions to an agent ([spec/REVIEW.md](spec/REVIEW.md)). No git? Open `out/canvas.html` directly: comments stay in the browser, and **Download review file** saves them to send by hand.
 
 ## Use it on your app
 
@@ -82,7 +87,7 @@ your app's code ──(agent reads)──▶ design.json, parts.css, guides/, ca
 | `spec/DESIGN_JSON.md`, `spec/design.schema.json` | The standard format, for people and for validators. |
 | `spec/CANVAS.md` | How screens are drawn on the canvas. |
 | `spec/REVIEW.md` | The review file format, merging and validation. |
-| `engine/` | `build.py` (CLI), `tokens.py` (format, CSS, tokens, contrast, drift), `reviews.py` (review files), `mcp_server.py` (MCP tools), `markdown.py` (chapters), `assets/` (page templates, canvas, inspect panel). |
+| `engine/` | `build.py` (CLI), `tokens.py` (format, CSS, tokens, contrast, drift), `reviews.py` (review files), `serve.py` (the local review helper), `mcp_server.py` (MCP tools), `markdown.py` (chapters), `assets/` (page templates, canvas, `inspect.js`, `review.js`). |
 | `docs/INSTALL.md` | Install for each agent and MCP client. |
 | `AGENTS.md` | Instructions for agents working on design-canvas itself. |
 | `.claude-plugin/` | Claude Code plugin and marketplace manifests. |
@@ -96,7 +101,7 @@ Every token in `design.json` carries `src: "path/to/file.ts:12"`. `--check` reop
 
 - The engine and the MCP server run locally and make no network calls. The MCP server only works inside one project folder.
 - The built pages make one: they load fonts from Google Fonts, unless you build with `--no-web-fonts`.
-- Comments stay in the reviewer's browser until they choose to send the file.
+- The review helper only answers this computer (127.0.0.1), needs a per-run token, and only ever commits the reviewer's own review file. Without it, comments stay in the browser until the reviewer downloads the file.
 - Your coding agent sees your code while writing `design.json`, as in any AI-assisted work.
 
 ## Tests
@@ -105,7 +110,7 @@ Every token in `design.json` carries `src: "path/to/file.ts:12"`. `--check` reop
 python3 -m unittest discover tests
 ```
 
-The tests cover the engine, review files and the MCP server (both protocol eras). CI runs them on Linux, macOS and Windows with Python 3.9 and 3.12.
+The tests cover the engine, review files, the review helper against real git repos, and the MCP server (both protocol eras). CI runs them on Linux, macOS and Windows with Python 3.9 and 3.12.
 
 ## Licence
 

@@ -1,0 +1,10 @@
+{
+  "format": "design-canvas-review",
+  "schemaVersion": 2,
+  "app": "Acme Habits",
+  "author": "Alex",
+  "comments": [],
+  "updates": [
+    { "id": "sam-w7q3m1", "status": "ready", "note": "Low days use colors.surfaceRaised instead of no fill (StatsScreen.tsx).", "by": "Alex", "via": "cli", "at": "2026-11-11T09:40:00Z", "seq": 1 }
+  ]
+}

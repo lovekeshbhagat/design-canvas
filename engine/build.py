@@ -18,6 +18,7 @@ Python 3.9+ standard library only.
 from __future__ import annotations
 
 import argparse
+import os
 import html
 import json
 import re
@@ -372,8 +373,9 @@ def device(d: Design, meta: dict, page: dict, body: str) -> tuple[str, int]:
     return f'<div class="dev dev-{kind}{" tall" if tall else ""}"{attrs} style="{style}">{inner}</div>', w
 
 
-def build_canvas(d: Design, root: Path | None = None, comments=None, web_fonts: bool = True):
-    """Returns (html or None, number of screens, problems, screens {id: {title, page, source}})."""
+def build_canvas(d: Design, root: Path | None = None, review_data=None, web_fonts: bool = True):
+    """Returns (html or None, number of screens, problems, screens {id: {title, page, source}}).
+    review_data: (comments, updates) as read from reviews/ (the page merges them itself)."""
     cdir = d.dir / "canvas"
     pages = sorted((cdir / "pages").glob("*.json"))
     if not pages:
@@ -432,24 +434,61 @@ def build_canvas(d: Design, root: Path | None = None, comments=None, web_fonts: 
         nav.append(f'<button type="button" data-goto="{esc(pid)}">{esc(title)}<small>{count}</small></button>')
         chips.append(f'<button type="button" data-goto="{esc(pid)}">{esc(title)}</button>')
         data_pages.append({"id": pid, "title": title, "rows": rows_data, "links": page.get("links", [])})
-    dc = {"app": d.name, "built": reviews.now(), **d.inspect_data(), "rules": parse_css(app_css),
-          "screens": screens, "comments": [reviews.public(c) for c in (comments or [])]}
+    raw_comments, raw_updates = review_data or ([], [])
+    dc = {"app": d.name, "built": reviews.now(), **d.inspect_data(), "rules": parse_css(app_css), "screens": screens,
+          "comments": [reviews.public(c) for c in raw_comments], "updates": list(raw_updates)}
     page = page_shell(
         "canvas.html", d, web_fonts,
         TITLE=f"{esc(d.name)} screens", CSS_VARS=d.css(), CSS=css, SPRITE=d.sprite(),
         PAGES_NAV="".join(nav), PAGES_CHIPS="".join(chips), PAGES="".join(pages_html),
         DATA=script_json({"pages": data_pages}), DC=script_json(dc),
-        JS=read(ASSETS / "canvas.js") + "\n" + read(ASSETS / "review.js"), N_FRAMES=str(n_frames),
+        JS="\n".join(read(ASSETS / n) for n in ("canvas.js", "inspect.js", "review.js")), N_FRAMES=str(n_frames),
         DEFAULT_THEME=esc(d.default), INITIAL=esc(d.name[:1].upper()),
     )
     return page, n_frames, missing, screens
 
 
-# ---------------------------------------------------------------- CLI
+# ---------------------------------------------------------------- build everything
 def plain(msg: str) -> str:
     return msg.replace("`", "")
 
 
+def build_all(d: Design, root: Path, out: Path, web: bool = True) -> tuple[dict, list]:
+    """Write guide, canvas and tokens to `out`. Returns (summary for --json, text lines)."""
+    raw_c, raw_u, review_files, review_errors = reviews.load_raw(d.dir)
+    merged, unique_u = reviews.merge(raw_c, raw_u)
+    drift_result = d.check(root) if root.is_dir() else None
+    usage = d.usage(root) if root.is_dir() else None
+    canvas, n_frames, missing, _ = build_canvas(d, root, (raw_c, unique_u), web)
+    guide, guide_missing = build_guide(d, drift_result, usage, n_frames, web)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "guide.html").write_text(guide, encoding="utf-8")
+    if canvas:
+        (out / "canvas.html").write_text(canvas, encoding="utf-8")
+    (out / "tokens.json").write_text(json.dumps(d.dtcg(), indent=2) + "\n", encoding="utf-8")
+    for t in d.theme_ids[1:]:
+        (out / f"tokens.{t}.json").write_text(json.dumps(d.dtcg(t), indent=2) + "\n", encoding="utf-8")
+    (out / "tokens.md").write_text(d.markdown(drift_result[0] if drift_result else None), encoding="utf-8")
+    drift_n = f"{len(drift_result[0])}, without src: {len(drift_result[3])}" if drift_result else "not run"
+    c = reviews.counts(merged)
+    files = ["guide.html"] + (["canvas.html"] if canvas else []) + ["tokens.json"] + [f"tokens.{t}.json" for t in d.theme_ids[1:]] + ["tokens.md"]
+    lines = [f"built {out}/guide.html ({len(guide) // 1024} KB)" + (f", canvas.html ({len(canvas) // 1024} KB, {n_frames} screens)" if canvas else "")
+             + f" · {d.count()} tokens · drift: {drift_n} · contrast issues: {len(d.contrast_problems())}"]
+    if merged or review_errors:
+        lines.append(f"reviews: {c['open']} need a fix, {c['ready'] + c['question']} to check, "
+                     f"{c['resolved'] + c['wontfix']} closed, from {len(review_files)} file(s)")
+    lines += [f"missing: {m}" for m in missing + guide_missing] + [f"review: {e}" for e in review_errors]
+    summary = {
+        "ok": True, "out": str(out), "files": files, "screens": n_frames, "tokens": d.count(),
+        "drift": [plain(p) for p in drift_result[0]] if drift_result else None,
+        "unsourced": drift_result[3] if drift_result else None,
+        "contrastIssues": [plain(p) for p in d.contrast_problems()], "reviews": c,
+        "missing": missing + guide_missing, "reviewErrors": review_errors, "warnings": d.warnings,
+    }
+    return summary, [f"warning: {w}" for w in d.warnings] + lines
+
+
+# ---------------------------------------------------------------- CLI
 def main(argv=None) -> int:
     for stream in (sys.stdout, sys.stderr):  # Windows consoles default to a legacy code page
         try:
@@ -463,10 +502,13 @@ def main(argv=None) -> int:
     ap.add_argument("--root", help="app repo root (default: app.root in design.json, else '..')")
     ap.add_argument("--out", help="output folder (default: <dir>/out)")
     ap.add_argument("--no-web-fonts", action="store_true", help="don't load fonts from Google Fonts (fully offline pages)")
-    ap.add_argument("--reviews", action="store_true", help="list open review comments for a coding agent")
-    ap.add_argument("--resolve", metavar="ID", help="set the status of one review comment")
-    ap.add_argument("--status", default="resolved", help="with --resolve: " + " | ".join(reviews.STATUSES))
-    ap.add_argument("--note", default="", help="with --resolve: one line on what changed (or why not)")
+    ap.add_argument("--reviews", action="store_true", help="list review comments that need a fix, for a coding agent")
+    ap.add_argument("--resolve", metavar="ID", help="record what you did about one review comment")
+    ap.add_argument("--status", default="ready", help="with --resolve: " + " | ".join(reviews.DEV_STATUSES) + " (default ready)")
+    ap.add_argument("--note", default="", help="with --resolve: one line on what changed, the question, or why not")
+    ap.add_argument("--as", dest="as_name", metavar="NAME", help="your name for review files (default: git user.name)")
+    ap.add_argument("--serve", action="store_true", help="run the local review helper (this computer only)")
+    ap.add_argument("--port", type=int, default=8765, help="with --serve: port on 127.0.0.1 (default 8765)")
     ap.add_argument("--json", action="store_true", help="print machine-readable JSON instead of text")
     a = ap.parse_args(argv)
 
@@ -494,10 +536,14 @@ def main(argv=None) -> int:
             1 if problems or unsourced else 0)
     if a.resolve:
         try:
-            msg = reviews.resolve(d.dir, a.resolve, a.status, a.note)
+            me = reviews.identity(d.dir, a.as_name)
+            msg = reviews.resolve(d.dir, a.resolve, a.status, a.note, me, via="mcp" if os.environ.get("DESIGN_CANVAS_VIA") == "mcp" else "cli")
         except reviews.ReviewError as e:
             return emit({"ok": False, "error": str(e)}, [f"error: {e}"], 2)
         return emit({"ok": True, "result": msg}, [msg], 0)
+    if a.serve:
+        import serve
+        return serve.run(d, root, a.port, not a.no_web_fonts, a.as_name, build_all, script_json)
     comments, review_files, review_errors = reviews.load(d.dir)
     if a.reviews:
         _, _, _, screens = build_canvas(d, root)
@@ -506,41 +552,15 @@ def main(argv=None) -> int:
         print(reviews.report(comments, screens, d.known_tokens(), review_files, review_errors))
         return 0
     if a.validate:
-        _, _, missing, _ = build_canvas(d, root, comments)
+        _, _, missing, _ = build_canvas(d, root)
         summary = f"design.json ok ({d.count()} tokens, {len(d.themes)} theme(s), {len(d.icons.get('items') or {})} icons)"
         return emit({"ok": not missing, "tokens": d.count(), "themes": len(d.themes), "icons": len(d.icons.get("items") or {}),
                      "missing": missing, "reviewErrors": review_errors, "warnings": d.warnings},
                     [f"warning: {w}" for w in d.warnings] + [f"review: {e}" for e in review_errors] + [f"missing: {m}" for m in missing] + [summary],
                     1 if missing else 0)
-    drift_result = d.check(root) if root.is_dir() else None
-    usage = d.usage(root) if root.is_dir() else None
-    web = not a.no_web_fonts
-    canvas, n_frames, missing, _ = build_canvas(d, root, comments, web)
-    guide, guide_missing = build_guide(d, drift_result, usage, n_frames, web)
     out = Path(a.out).resolve() if a.out else d.dir / "out"
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "guide.html").write_text(guide, encoding="utf-8")
-    if canvas:
-        (out / "canvas.html").write_text(canvas, encoding="utf-8")
-    (out / "tokens.json").write_text(json.dumps(d.dtcg(), indent=2) + "\n", encoding="utf-8")
-    for t in d.theme_ids[1:]:
-        (out / f"tokens.{t}.json").write_text(json.dumps(d.dtcg(t), indent=2) + "\n", encoding="utf-8")
-    (out / "tokens.md").write_text(d.markdown(drift_result[0] if drift_result else None), encoding="utf-8")
-    drift_n = f"{len(drift_result[0])}, without src: {len(drift_result[3])}" if drift_result else "not run"
-    c = reviews.counts(comments)
-    files = ["guide.html"] + (["canvas.html"] if canvas else []) + ["tokens.json"] + [f"tokens.{t}.json" for t in d.theme_ids[1:]] + ["tokens.md"]
-    lines = [f"built {out}/guide.html ({len(guide) // 1024} KB)" + (f", canvas.html ({len(canvas) // 1024} KB, {n_frames} screens)" if canvas else "")
-             + f" · {d.count()} tokens · drift: {drift_n} · contrast issues: {len(d.contrast_problems())}"]
-    if comments or review_errors:
-        lines.append(f"reviews: {c['open'] + c['question'] + c['reopened']} open, {c['resolved'] + c['wontfix']} closed, from {len(review_files)} file(s)")
-    lines += [f"missing: {m}" for m in missing + guide_missing] + [f"review: {e}" for e in review_errors]
-    return emit({
-        "ok": True, "out": str(out), "files": files, "screens": n_frames, "tokens": d.count(),
-        "drift": [plain(p) for p in drift_result[0]] if drift_result else None,
-        "unsourced": drift_result[3] if drift_result else None,
-        "contrastIssues": [plain(p) for p in d.contrast_problems()], "reviews": c,
-        "missing": missing + guide_missing, "reviewErrors": review_errors, "warnings": d.warnings,
-    }, [f"warning: {w}" for w in d.warnings] + lines, 0)
+    summary, lines = build_all(d, root, out, not a.no_web_fonts)
+    return emit(summary, lines, 0)
 
 
 if __name__ == "__main__":

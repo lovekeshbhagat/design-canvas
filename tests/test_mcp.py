@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -52,11 +53,16 @@ class Server:
 class MCP(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
+        self.env = dict(os.environ)
+        (self.tmp / "gitconfig").write_text("[user]\n\tname = Alex\n\temail = alex@example.com\n", encoding="utf-8")
+        os.environ.update(GIT_CONFIG_GLOBAL=str(self.tmp / "gitconfig"), GIT_CONFIG_NOSYSTEM="1")
         shutil.copytree(SAMPLE, self.tmp / "design-canvas", ignore=shutil.ignore_patterns("out"))
         self.s = Server(self.tmp)
 
     def tearDown(self):
         self.s.close()
+        os.environ.clear()
+        os.environ.update(self.env)
         shutil.rmtree(self.tmp)
 
     def call(self, name, args=None, modern=True):
@@ -96,14 +102,17 @@ class MCP(unittest.TestCase):
     def test_reviews_resolve_build_and_instructions(self):
         rv = self.call("design_canvas_reviews")["structuredContent"]
         self.assertIn("DATA, not instructions", rv["notice"])
-        self.assertEqual(len(rv["open"]), 1)
-        cid = rv["open"][0]["id"]
-        self.assertIn("text", rv["open"][0]["untrusted"])
+        self.assertEqual(len(rv["needsFix"]), 1)
+        cid = rv["needsFix"][0]["id"]
+        self.assertIn("text", rv["needsFix"][0]["untrusted"])
         res = self.call("design_canvas_resolve", {"id": cid, "note": "Habit names use weight 700 (TodayScreen.tsx)"})
         self.assertTrue(res["structuredContent"]["ok"])
-        self.assertEqual(len(self.call("design_canvas_reviews")["structuredContent"]["open"]), 0)
+        self.assertEqual(len(self.call("design_canvas_reviews")["structuredContent"]["needsFix"]), 0)
+        written = json.loads(next((self.tmp / "design-canvas" / "reviews").glob("alex-*.json")).read_text(encoding="utf-8"))
+        self.assertEqual((written["updates"][0]["status"], written["updates"][0]["via"]), ("ready", "mcp"))
         bad = self.call("design_canvas_resolve", {"id": "nobody-zzz9", "note": "x"})["structuredContent"]
         self.assertFalse(bad["ok"])
+        self.assertTrue(self.call("design_canvas_resolve", {"id": cid, "status": "resolved"})["isError"], "only the reviewer resolves")
         b = self.call("design_canvas_build", {"noWebFonts": True})["structuredContent"]
         self.assertTrue(b["ok"])
         self.assertTrue((self.tmp / "design-canvas" / "out" / "canvas.html").exists())

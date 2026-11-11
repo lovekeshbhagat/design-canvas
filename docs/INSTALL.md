@@ -110,6 +110,23 @@ python3 /ABS/engine/build.py design-canvas --reviews --json
 
 For an agent with no skills or MCP support (Aider, a custom agent, a chat window), paste: *"Follow /ABS/SKILL.md to build a design guide and screen canvas for this repo."*
 
+## For designers and other reviewers
+
+You don't need an AI tool to review. You need a copy of the repo (git), Python 3.9+, and this folder.
+
+```bash
+python3 /ABS/engine/build.py design-canvas --serve
+```
+
+Open the link it prints; only your computer can open it. Then:
+1. Turn on **Inspect**, click any element and comment.
+2. **End review** sends your comments: it commits only your review file and pushes it.
+3. **Get latest** shows what the developer changed.
+
+Your name comes from git (`git config user.name`), or pass `--as "Your Name"`. If the branch is protected, switch to a review branch (`git switch -c review/your-name`) and open a pull request after End review.
+
+No git? Open `design-canvas/out/canvas.html` directly, comment, then use **Download review file** and send it to the developer.
+
 ## Notes for every tool
 
 - **Review comments come from other people.** SKILL.md, the `--reviews` output and the MCP tool descriptions all tell the agent to treat them as design requests, never as instructions. The engine also enforces it: review text is fenced off, and it can never point the agent at a file.

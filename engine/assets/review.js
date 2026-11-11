@@ -1,18 +1,29 @@
-// design-canvas review: inspect any element on a screen, comment on it, send the review back as a file.
-// No server: comments live in this browser until exported. Review text is always inserted as text, never HTML.
+// design-canvas review: comments on screens, their status, and sending them with git.
+// Two modes:
+//   helper  opened from `build.py --serve` (window.DC_SERVE): your comments save to your own review file,
+//           End review commits and pushes it, Get latest pulls.
+//   file    opened as a plain file: comments stay in this browser until you download the review file.
+// Everything people wrote is inserted as text, never as HTML.
 ;(() => {
   const D = window.DC
   const C = window.DC_CANVAS
-  if (!D || !C) return
+  const I = window.DC_INSPECT
+  const S = window.DC_SERVE || null
+  if (!D || !C || !I) return
   const { board, world } = C
   const drawer = document.getElementById('dc-drawer')
   const btnInspect = document.getElementById('dc-inspect')
   const btnComments = document.getElementById('dc-comments')
   const countEl = document.getElementById('dc-count')
-  const KEY = 'design-canvas.review.' + D.app
-  const STATUSES = ['open', 'resolved', 'wontfix', 'question', 'reopened']
-  const OPEN = ['open', 'question', 'reopened']
-  const CLOSED = ['resolved', 'wontfix']
+  const STATUS = {
+    open: { label: 'Needs fix', group: 'fix', mark: '' },
+    ready: { label: 'Fix ready', group: 'check', mark: '✓' },
+    question: { label: 'Question', group: 'check', mark: '?' },
+    resolved: { label: 'Resolved', group: 'closed', mark: '✓' },
+    wontfix: { label: "Won't fix", group: 'closed', mark: '–' },
+  }
+  const UPDATE_STATUSES = [...Object.keys(STATUS), 'deleted']
+  const VIA = ['browser', 'cli', 'mcp', 'file']
   const ID = /^[a-z0-9][a-z0-9_-]{2,63}$/
   const TS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$/
   const PATH = /^[a-z][a-z0-9-]*:nth-of-type\(\d{1,4}\)(>[a-z][a-z0-9-]*:nth-of-type\(\d{1,4}\))*$/
@@ -34,16 +45,28 @@
   }
   const nowIso = () => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
   const clip = (s, n) => String(s ?? '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/g, '').slice(0, n)
-  const slug = (s) => (String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24) || 'reviewer')
-  const rand = () => Array.from(crypto.getRandomValues(new Uint8Array(5)), (b) => (b % 36).toString(36)).join('')
-  const round = (n) => Math.round(n * 10) / 10
-  const px = (n) => `${round(n)}`
+  const slug = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'reviewer'
+  const rand = () => Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => (b % 36).toString(36)).join('')
+  const byTime = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
+  function ago(ts) {
+    const s = (Date.now() - Date.parse(ts)) / 1000
+    if (!(s >= 0)) return ts.slice(0, 10)
+    if (s < 60) return 'just now'
+    if (s < 3600) return `${Math.floor(s / 60)} min ago`
+    if (s < 86400) return `${Math.floor(s / 3600)} h ago`
+    if (s < 86400 * 7) return `${Math.floor(s / 86400)} d ago`
+    return ts.slice(0, 10)
+  }
+  const initials = (name) => (String(name).trim().split(/\s+/).map((w) => w[0]).join('').slice(0, 2) || '?').toUpperCase()
+  const hue = (name) => [...String(name)].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) % 360, 7)
+  const avatar = (name) => h('span', { class: 'dc-avatar', style: `background:hsl(${hue(name)} 52% 42%)`, 'aria-hidden': 'true' }, initials(name))
+  const when = (ts) => h('time', { datetime: ts, title: ts.replace('T', ' ').replace('Z', ' UTC') }, ago(ts))
 
-  // ---------- comments: validation, storage, merge ----------
-  function clean(c) {
+  // ---------- validation (same rules as engine/reviews.py) ----------
+  function cleanComment(c) {
     if (!c || typeof c !== 'object') return null
     const id = String(c.id || '').toLowerCase()
-    if (!ID.test(id) || typeof c.screen !== 'string' || typeof c.body !== 'string' || !STATUSES.includes(c.status)) return null
+    if (!ID.test(id) || typeof c.screen !== 'string' || typeof c.body !== 'string' || !c.author) return null
     if (!TS.test(c.created || '') || !TS.test(c.modified || '')) return null
     const a = c.anchor && typeof c.anchor === 'object' ? c.anchor : {}
     const b = a.box && typeof a.box === 'object' ? a.box : null
@@ -59,12 +82,90 @@
         text: a.text ? clip(a.text, 200) : undefined,
         box: b ? { x: +b.x || 0, y: +b.y || 0, w: +b.w || 0, h: +b.h || 0 } : undefined,
       },
-      tokens, body: clip(c.body, 4000), author: clip(c.author, 80) || 'Reviewer', status: c.status,
-      created: c.created, modified: c.modified, resolvedAt: TS.test(c.resolvedAt || '') ? c.resolvedAt : null,
-      resolution: c.resolution ? clip(c.resolution, 1000) : undefined,
+      tokens, body: clip(c.body, 4000), author: clip(c.author, 80), created: c.created, modified: c.modified,
     }
   }
-  function load() {
+  function cleanUpdate(u) {
+    if (!u || typeof u !== 'object') return null
+    const id = String(u.id || '').toLowerCase()
+    if (!ID.test(id) || !UPDATE_STATUSES.includes(u.status) || !TS.test(u.at || '') || !u.by) return null
+    const seq = Number.isInteger(u.seq) && u.seq >= 0 ? u.seq : 0
+    const out = { id, status: u.status, note: clip(u.note, 1000), by: clip(u.by, 80), via: VIA.includes(u.via) ? u.via : 'file', at: u.at, seq }
+    if (typeof u.byId === 'string' && ID.test(u.byId)) out.byId = u.byId
+    return out
+  }
+  // A version-1 file kept the status inside each comment: read it as an update.
+  function fromFile(doc) {
+    const out = { comments: [], updates: [] }
+    if (!doc || doc.format !== 'design-canvas-review' || ![1, 2].includes(doc.schemaVersion)) return null
+    for (const raw of Array.isArray(doc.comments) ? doc.comments.slice(0, 500) : []) {
+      const c = cleanComment(raw)
+      if (!c) continue
+      out.comments.push(c)
+      if (doc.schemaVersion === 1 && raw.status && raw.status !== 'open') {
+        const st = raw.status === 'reopened' ? 'open' : raw.status
+        const u = cleanUpdate({ id: c.id, status: st, note: raw.resolution, by: 'earlier review', via: 'file', at: raw.resolvedAt || c.modified, seq: 0 })
+        if (u) out.updates.push(u)
+      }
+    }
+    for (const raw of Array.isArray(doc.updates) ? doc.updates.slice(0, 2000) : []) {
+      const u = cleanUpdate(raw)
+      if (u) out.updates.push(u)
+    }
+    return out
+  }
+
+  // ---------- merge (same rules as engine/reviews.py) ----------
+  // Each person's updates in their own `seq` order; people interleaved by time. Only an author can delete.
+  function merge(comments, updates) {
+    const byId = new Map()
+    for (const c of comments) {
+      const cur = byId.get(c.id)
+      if (!cur || c.modified > cur.modified) byId.set(c.id, { ...c })
+    }
+    const seen = new Set()
+    const writers = new Map()
+    for (const u of updates) {
+      const k = [u.id, u.status, u.at, u.by, u.seq, u.note].join('\u0001')
+      if (seen.has(k)) continue
+      seen.add(k)
+      if (!writers.has(u.by)) writers.set(u.by, [])
+      writers.get(u.by).push(u)
+    }
+    const queues = [...writers.values()].map((q) => q.sort((a, b) => a.seq - b.seq || byTime(a.at, b.at)))
+    const pos = queues.map(() => 0)
+    const ordered = []
+    for (;;) {
+      let best = -1
+      for (let i = 0; i < queues.length; i++) {
+        if (pos[i] >= queues[i].length) continue
+        const u = queues[i][pos[i]]
+        const b = best >= 0 ? queues[best][pos[best]] : null
+        if (!b || u.at < b.at || (u.at === b.at && u.by < b.by)) best = i
+      }
+      if (best < 0) break
+      ordered.push(queues[best][pos[best]++])
+    }
+    for (const c of byId.values()) Object.assign(c, { status: 'open', history: [] })
+    const deleted = new Set()
+    for (const u of ordered) {
+      const c = byId.get(u.id)
+      if (!c) continue
+      if (u.status === 'deleted') {
+        if (u.byId ? c.id.startsWith(u.byId + '-') : u.by === c.author) deleted.add(c.id)
+        continue
+      }
+      c.status = u.status
+      c.history.push(u)
+    }
+    return [...byId.values()]
+      .filter((c) => !deleted.has(c.id) && !deleted.has(c.replyTo))
+      .sort((a, b) => byTime(a.created, b.created) || byTime(a.id, b.id))
+  }
+
+  // ---------- who am I, and what I wrote ----------
+  const KEY = 'design-canvas.review.' + D.app + (S ? '.' + S.me.slug : '')
+  function loadLocal() {
     try {
       const v = JSON.parse(localStorage.getItem(KEY) || '{}')
       return v && typeof v === 'object' ? v : {}
@@ -72,251 +173,220 @@
       return {}
     }
   }
-  const local = load()
-  local.author = clip(local.author, 80)
-  local.comments = (Array.isArray(local.comments) ? local.comments : []).map(clean).filter(Boolean)
-  let imported = []
-  function save() {
+  const stored = loadLocal()
+  const mine = {
+    author: S ? S.me.name : clip(stored.author, 80),
+    comments: (Array.isArray(stored.comments) ? stored.comments : []).map(cleanComment).filter(Boolean),
+    updates: (Array.isArray(stored.updates) ? stored.updates : []).map(cleanUpdate).filter(Boolean),
+    unsent: !!stored.unsent,
+  }
+  const me = () => (S ? S.me : mine.author ? { name: mine.author, slug: slug(mine.author) } : null)
+  function backup() {
     try {
-      localStorage.setItem(KEY, JSON.stringify({ author: local.author, comments: local.comments, lastExport: local.lastExport }))
+      localStorage.setItem(KEY, JSON.stringify({ author: mine.author, comments: mine.comments, updates: mine.updates, unsent: mine.unsent }))
     } catch {}
   }
-  // Same rule as engine/reviews.py: newest `modified` wins, but a closed comment is only reopened explicitly.
-  function newer(cur, nw) {
-    if (CLOSED.includes(cur.status) && !['reopened', ...CLOSED].includes(nw.status)) return cur
-    return nw.modified > cur.modified ? nw : cur
-  }
-  function all() {
-    const m = new Map()
-    for (const src of [D.comments || [], imported, local.comments]) {
-      for (const raw of src) {
-        const c = clean(raw)
-        if (!c) continue
-        const cur = m.get(c.id)
-        m.set(c.id, cur ? newer(cur, c) : c)
-      }
-    }
-    return [...m.values()].sort((a, b) => (a.created < b.created ? -1 : a.created > b.created ? 1 : a.id < b.id ? -1 : 1))
-  }
-  const topLevel = () => all().filter((c) => !c.replyTo)
-  const pinNumber = (id) => topLevel().findIndex((c) => c.id === id) + 1
+  let server = { comments: (D.comments || []).map(cleanComment).filter(Boolean), updates: (D.updates || []).map(cleanUpdate).filter(Boolean) }
+  let imported = { comments: [], updates: [] }
+  let git = null
+  const all = () => merge([...server.comments, ...imported.comments, ...mine.comments], [...server.updates, ...imported.updates, ...mine.updates])
+  const topLevel = (list = all()) => list.filter((c) => !c.replyTo)
+  const isMine = (c) => !!me() && c.author === me().name && c.id.startsWith(me().slug + '-')
 
-  // ---------- the cascade, from the app's own CSS text (engine/build.py parse_css) ----------
-  const cmp = (x, y) => {
-    for (let i = 0; i < Math.max(x.length, y.length); i++) {
-      const d = (x[i] || 0) - (y[i] || 0)
-      if (d) return d
+  // ---------- saving ----------
+  let stale = false
+  let saveState = S ? 'saved' : mine.comments.length || mine.updates.length ? 'local' : 'empty'
+  let saveTimer = 0
+  const SAVE_TEXT = {
+    empty: '',
+    local: 'Saved in this browser. Download the review file to send it.',
+    unsaved: 'Unsaved changes…',
+    saving: 'Saving…',
+    saved: 'Saved to your review file.',
+    offline: 'Saved in this browser only: the review helper is not running. Restart it to send.',
+  }
+  async function api(path, body) {
+    const r = await fetch('/api/' + path, {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: { 'X-DC-Token': S.token, 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      cache: 'no-store',
+    })
+    const j = await r.json().catch(() => ({ ok: false, message: 'The review helper sent an unreadable answer.' }))
+    if (!r.ok && j.ok !== false) j.ok = false
+    if (r.status === 403) {
+      // the helper was restarted (new token) or this page came from somewhere else
+      j.message = 'The review helper was restarted. Reload this page to carry on; your comments are kept in this browser.'
+      stale = true
     }
-    return 0
+    return j
   }
-  function splitList(sel) {
-    const out = []
-    let depth = 0, cur = ''
-    for (const ch of sel) {
-      if (ch === '(' || ch === '[') depth++
-      else if (ch === ')' || ch === ']') depth--
-      if (ch === ',' && !depth) { out.push(cur.trim()); cur = '' } else cur += ch
+  function persist() {
+    mine.unsent = true
+    backup()
+    if (!S) {
+      setSave('local')
+      return
     }
-    if (cur.trim()) out.push(cur.trim())
-    return out
+    setSave('unsaved')
+    clearTimeout(saveTimer)
+    saveTimer = setTimeout(flush, 700)
   }
-  function specificity(sel) {
-    let s = sel.replace(/:where\((?:[^()]|\([^()]*\))*\)/g, ' ').replace(/:(?:is|not|has)\(((?:[^()]|\([^()]*\))*)\)/g, ' $1')
-    let a = 0, b = 0, c = 0
-    s = s.replace(/\[[^\]]*\]/g, () => { b++; return ' ' })
-    s = s.replace(/#[\w-]+/g, () => { a++; return ' ' })
-    s = s.replace(/\.[\w-]+/g, () => { b++; return ' ' })
-    s = s.replace(/::[\w-]+(\([^)]*\))?/g, () => { c++; return ' ' })
-    s = s.replace(/:[\w-]+(\([^)]*\))?/g, () => { b++; return ' ' })
-    s.replace(/(^|[\s>+~])([a-zA-Z][\w-]*)/g, () => { c++ })
-    return [a, b, c]
-  }
-  const RULES = (D.rules || []).map((r, i) => ({ i, m: r.m, d: r.d, parts: splitList(r.s).map((s) => ({ s, spec: specificity(s) })) }))
-  const mqs = {}
-  const mq = (m) => !m || (mqs[m] = mqs[m] || matchMedia(m)).matches
-  function declsOn(el) {
-    const out = []
-    for (const r of RULES) {
-      if (r.m && !mq(r.m)) continue
-      let best = null
-      for (const p of r.parts) {
-        let ok = false
-        try { ok = el.matches(p.s) } catch {}
-        if (ok && (!best || cmp(p.spec, best) > 0)) best = p.spec
-      }
-      if (best) for (const [prop, value, imp] of r.d) out.push({ prop, value, rank: [imp ? 1 : 0, 0, ...best, r.i], where: r.parts.map((p) => p.s).join(', ') })
+  async function flush() {
+    if (!S || !mine.unsent) return true
+    clearTimeout(saveTimer)
+    setSave('saving')
+    try {
+      const r = await api('save', { comments: mine.comments, updates: mine.updates })
+      if (!r.ok) throw new Error(r.message || 'not saved')
+      mine.unsent = false
+      backup()
+      git = r.git || git
+      setSave('saved')
+      return true
+    } catch (e) {
+      setSave('offline')
+      notice = { text: stale ? e.message : `Not sent to your review file: ${e.message}. Your comments are kept in this browser.`, error: true }
+      alarm(notice.text)
+      render()
+      return false
     }
-    const inline = el.getAttribute('style')
-    if (inline) {
-      for (const part of inline.split(/;(?![^(]*\))/)) {
-        const k = part.indexOf(':')
-        if (k < 0) continue
-        let v = part.slice(k + 1).trim()
-        const imp = /!important$/.test(v)
-        if (imp) v = v.replace(/!important$/, '').trim()
-        out.push({ prop: part.slice(0, k).trim().toLowerCase(), value: v, rank: [imp ? 1 : 0, 1, 0, 0, 0, 1e9], where: 'inline style' })
-      }
-    }
-    return out
   }
-  const GROUPS = [
-    { key: 'color', label: 'Text colour', kind: 'color', inherit: true, props: ['color'] },
-    { key: 'background', label: 'Background', kind: 'color', props: ['background', 'background-color'] },
-    { key: 'border', label: 'Border', kind: 'color', props: ['border', 'border-color', 'border-top', 'border-right', 'border-bottom', 'border-left'] },
-    { key: 'font', label: 'Type', kind: 'type', inherit: true, props: ['font', 'font-family', 'font-size', 'line-height', 'font-weight', 'font-style'] },
-    { key: 'letter', label: 'Letter spacing', kind: 'size', inherit: true, props: ['letter-spacing'] },
-    { key: 'padding', label: 'Padding', kind: 'size', props: ['padding', 'padding-inline', 'padding-block', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left'] },
-    { key: 'margin', label: 'Margin', kind: 'size', props: ['margin', 'margin-inline', 'margin-block', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left'] },
-    { key: 'gap', label: 'Gap', kind: 'size', props: ['gap', 'row-gap', 'column-gap'] },
-    { key: 'radius', label: 'Corner radius', kind: 'size', props: ['border-radius'] },
-    { key: 'shadow', label: 'Shadow', kind: 'shadow', props: ['box-shadow'] },
-  ]
-  function authored(el, group, stop) {
-    for (let n = el; n; n = n.parentElement) {
-      const decls = declsOn(n)
-      const wins = []
-      for (const p of group.props) {
-        let w = null
-        for (const d of decls) if (d.prop === p && (!w || cmp(d.rank, w.rank) >= 0)) w = d
-        if (w) wins.push(w)
-      }
-      if (wins.length) return { wins: wins.sort((a, b) => cmp(a.rank, b.rank)), from: n === el ? null : n }
-      if (!group.inherit || n === stop) return null
-    }
-    return null
-  }
-  function tokenOf(v) {
-    const t = D.vars[v]
-    if (!t) return { name: v, unknown: true }
-    if (t.startsWith('roles.')) {
-      const role = t.slice(6)
-      return D.roles[role] ? { name: `colors.${D.roles[role]}`, via: `role ${role}` } : { name: t }
-    }
-    return { name: t }
-  }
-  function describe(value, kind) {
-    const re = /var\(\s*(--[\w-]+)\s*(?:,[^)]*)?\)/g
-    const toks = []
-    let m
-    while ((m = re.exec(value))) toks.push(tokenOf(m[1]))
-    const rest = value.replace(re, ' ')
-    const raw = []
-    if (kind !== 'size' && kind !== 'type') raw.push(...(rest.match(/#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)/g) || []))
-    if (kind === 'size' || kind === 'type') raw.push(...(rest.match(/-?\d*\.?\d+px/g) || []).filter((x) => parseFloat(x) !== 0))
-    if (kind === 'shadow') raw.push(...(rest.match(/#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)/g) || []))
-    return { toks, raw }
-  }
-  const rgbOf = (s) => (String(s).match(/[\d.]+/g) || []).map(Number)
-  // A hand-typed size that equals a token: name the token the designer probably meant.
-  function sameAs(raw, key) {
-    const n = parseFloat(raw)
-    if (!/px$/.test(raw) || isNaN(n)) return ''
-    const pool = key === 'radius' ? D.radii : key === 'font' ? {} : D.spacing
-    const hit = Object.entries(pool || {}).find(([, v]) => v === n)
-    return hit ? ` = ${key === 'radius' ? 'radii' : 'spacing'}.${hit[0]}` : ''
-  }
-  function colorNames(computed, theme) {
-    const [r, g, b, a = 1] = rgbOf(computed)
-    if (r == null || a === 0) return []
-    const out = []
-    for (const [k, v] of Object.entries(D.colors[theme] || {})) if (Math.abs(v[0] - r) <= 1 && Math.abs(v[1] - g) <= 1 && Math.abs(v[2] - b) <= 1 && Math.abs((v[3] ?? 1) - a) < 0.02) out.push(`colors.${k}`)
-    return out
-  }
-  function typeNames(cs) {
-    const size = parseFloat(cs.fontSize), lh = parseFloat(cs.lineHeight)
-    return Object.entries(D.type || {}).filter(([, t]) => t.size === size && (isNaN(lh) || Math.abs(t.lh - lh) < 0.6)).map(([k, t]) => ({ name: `type.${k}`, weightDiff: String(t.weight) !== String(cs.fontWeight) }))
-  }
-  const themeOf = (el) => el.closest('[data-theme]')?.dataset.theme || D.defaultTheme
-  const describeEl = (n) => n.tagName.toLowerCase() + (n.dataset?.dc ? `[data-dc=${n.dataset.dc}]` : '') + [...n.classList].slice(0, 3).map((c) => '.' + c).join('')
-  function componentOf(el) {
-    for (let n = el; n && !n.classList.contains('sc'); n = n.parentElement) {
-      const c = [...n.classList].find((x) => x.startsWith('p-'))
-      if (c) return c
-    }
-    return undefined
-  }
-  function inspect(el) {
-    const sc = el.closest('.sc'), dev = el.closest('.dev')
-    const cs = getComputedStyle(el)
-    const k = dev.getBoundingClientRect().width / dev.offsetWidth || 1
-    const r = el.getBoundingClientRect()
-    const theme = themeOf(el)
-    const rows = []
-    const flags = []
-    for (const g of GROUPS) {
-      const a = authored(el, g, sc)
-      const row = { g, tokens: [], raw: [], from: a?.from, notes: [] }
-      if (a) {
-        for (const w of a.wins) {
-          const d = describe(w.value, g.kind)
-          row.tokens.push(...d.toks)
-          row.raw.push(...d.raw.map((x) => `${x}${sameAs(x, g.key)} (${w.prop})`))
-          if (w.prop !== g.props[0] && a.wins[0].prop === g.props[0]) row.notes.push(`${w.prop}: ${w.value}`)
-        }
-      }
-      if (g.key === 'color') row.value = cs.color
-      if (g.key === 'background') row.value = cs.backgroundColor
-      if (g.key === 'font') row.value = `${cs.fontSize}/${cs.lineHeight} · ${cs.fontWeight} · ${cs.fontFamily.split(',')[0].replace(/["']/g, '')}`
-      if (g.key === 'letter') row.value = cs.letterSpacing
-      if (g.key === 'padding') row.value = [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft].join(' ')
-      if (g.key === 'margin') row.value = [cs.marginTop, cs.marginRight, cs.marginBottom, cs.marginLeft].join(' ')
-      if (g.key === 'gap') row.value = cs.display.includes('flex') || cs.display.includes('grid') ? cs.gap : ''
-      if (g.key === 'radius') row.value = cs.borderRadius
-      if (g.key === 'shadow') row.value = cs.boxShadow === 'none' ? '' : cs.boxShadow
-      if (!a) {
-        // Nothing written for it: name it from the computed value when that is a token value.
-        if (g.key === 'color') row.guess = colorNames(cs.color, theme)
-        if (g.key === 'background') row.guess = colorNames(cs.backgroundColor, theme)
-        if (g.key === 'font') row.guess = typeNames(cs).map((t) => t.name + (t.weightDiff ? ` (weight ${cs.fontWeight})` : ''))
-      }
-      const trivial = !row.value || /^(0px( 0px)*|none|normal|rgba\(0, 0, 0, 0\))$/.test(row.value)
-      const empty = !row.tokens.length && !row.raw.length && !row.guess?.length && trivial
-      if (!empty) rows.push(row)
-      if (row.raw.length) flags.push(`${g.label}: ${row.raw.join(', ')}`)
-    }
-    return { el, theme, w: round(r.width / k), h: round(r.height / k), rows, flags, component: componentOf(el), text: (el.textContent || '').replace(/\s+/g, ' ').trim() }
+  function setSave(st) {
+    saveState = st
+    const el = drawer.querySelector('.dc-save')
+    if (el) el.textContent = SAVE_TEXT[st]
   }
 
-  // ---------- anchors ----------
-  function cssPath(el, base) {
-    const parts = []
-    for (let n = el; n && n !== base; n = n.parentElement) {
-      let i = 1
-      for (let s = n.previousElementSibling; s; s = s.previousElementSibling) if (s.tagName === n.tagName) i++
-      parts.unshift(`${n.tagName.toLowerCase()}:nth-of-type(${i})`)
+  // ---------- announcements (screen readers) ----------
+  const polite = h('div', { class: 'dc-sr', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' })
+  const urgent = h('div', { class: 'dc-sr', role: 'alert' })
+  document.body.append(polite, urgent)
+  const announce = (msg) => { polite.textContent = msg }
+  const alarm = (msg) => { urgent.textContent = msg }
+  let notice = null // { text, error } shown in the panel footer after End review / Get latest
+
+  // ---------- actions ----------
+  const nextSeq = () => mine.updates.reduce((m, u) => Math.max(m, u.seq), 0) + 1
+  function addComment(el, body) {
+    const t = nowIso()
+    const info = I.inspect(el)
+    const tokens = {}
+    for (const r of info.rows) {
+      const name = r.tokens[0]?.name || r.guess?.[0]
+      if (name && !r.tokens[0]?.unknown) tokens[r.g.key] = name
     }
-    return parts.join('>')
+    mine.comments.push({ id: `${me().slug}-${rand()}`, replyTo: null, screen: el.closest('.cv-frame').dataset.id, built: D.built,
+      anchor: I.anchorOf(el), tokens, body, author: me().name, created: t, modified: t })
+    persist()
+    announce('Comment added.')
+    refresh()
   }
-  function anchorOf(el) {
-    const dev = el.closest('.dev'), sc = el.closest('.sc')
-    const dcEl = el.closest('[data-dc]')
-    const base = dcEl && sc.contains(dcEl) ? dcEl : sc
-    const k = dev.getBoundingClientRect().width / dev.offsetWidth || 1
-    const r = el.getBoundingClientRect(), d = dev.getBoundingClientRect()
-    const path = el === base ? '' : cssPath(el, base)
-    return {
-      dc: base !== sc ? base.dataset.dc : undefined, path: path || undefined, component: componentOf(el),
-      text: (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 120) || undefined,
-      box: { x: round((r.left - d.left) / k), y: round((r.top - d.top) / k), w: round(r.width / k), h: round(r.height / k) },
-    }
+  function addReply(parent, body) {
+    const t = nowIso()
+    mine.comments.push({ id: `${me().slug}-${rand()}`, replyTo: parent.id, screen: parent.screen, built: D.built, anchor: parent.anchor,
+      tokens: {}, body, author: me().name, created: t, modified: t })
+    persist()
+    announce(`Reply added to ${parent.author}'s comment.`)
+    refresh()
   }
-  function findAnchor(c) {
-    const fig = world.querySelector(`.cv-frame[data-id="${CSS.escape(c.screen)}"]`)
-    if (!fig) return null
-    const dev = fig.querySelector('.dev'), sc = dev.querySelector('.sc')
-    const a = c.anchor || {}
-    let base = sc
-    if (a.dc) base = dev.querySelector(`[data-dc="${CSS.escape(a.dc)}"]`) || sc
-    let el = null
-    if (a.path && (base !== sc || !a.dc)) { try { el = base.querySelector(':scope>' + a.path) } catch {} }
-    else if (a.dc && base !== sc) el = base
-    const txt = (n) => (n.textContent || '').replace(/\s+/g, ' ').trim()
-    if (el && a.text && !txt(el).startsWith(a.text.slice(0, 40))) el = null
-    if (!el && a.text) {
-      const pool = a.component ? dev.querySelectorAll(`.${CSS.escape(a.component)}, .${CSS.escape(a.component)} *`) : sc.querySelectorAll('*')
-      for (const n of pool) if (txt(n) === a.text) el = n // keep the deepest match
+  function setStatus(c, status, note) {
+    mine.updates.push({ id: c.id, status, note: clip(note || '', 1000), by: me().name, byId: me().slug, via: 'browser', at: nowIso(), seq: nextSeq() })
+    persist()
+    announce(status === 'deleted' ? 'Comment deleted.' : `Comment marked ${STATUS[status].label}.`)
+    refresh()
+  }
+  function remove(c) {
+    if (!confirm(`Delete this ${c.replyTo ? 'reply' : 'comment'}? It disappears for everyone once your review is sent.`)) return
+    mine.comments = mine.comments.filter((x) => x.id !== c.id && x.replyTo !== c.id)
+    setStatus(c, 'deleted', '')
+  }
+  async function endReview() {
+    if (!(await flush())) return
+    notice = { text: 'Sending your review…' }
+    render()
+    let r
+    try {
+      r = await api('end-review', {})
+    } catch {
+      r = { ok: false, message: 'The review helper is not running. Start it again, then press End review.' }
     }
-    return { fig, dev, el, box: a.box }
+    git = r.git || git
+    notice = { text: r.message, error: !r.ok }
+    ;(r.ok ? announce : alarm)(r.message)
+    if (r.ok && r.reload) return location.reload()
+    render()
+  }
+  async function getLatest() {
+    if (!(await flush())) return
+    notice = { text: 'Getting the latest…' }
+    render()
+    let r
+    try {
+      r = await api('get-latest', {})
+    } catch {
+      r = { ok: false, message: 'The review helper is not running. Start it again, then press Get latest.' }
+    }
+    git = r.git || git
+    notice = { text: r.message, error: !r.ok }
+    ;(r.ok ? announce : alarm)(r.message)
+    if (r.ok && r.reload) return location.reload()
+    await loadState()
+  }
+  async function loadState() {
+    if (!S) return
+    try {
+      const st = await api('state')
+      if (!st.ok) throw new Error(st.message)
+      server = { comments: (st.comments || []).map(cleanComment).filter(Boolean), updates: (st.updates || []).map(cleanUpdate).filter(Boolean) }
+      git = st.git
+      if (!mine.unsent) {
+        // the helper's copy of my file is the truth; keep anything newer from this browser
+        mine.comments = ((st.mine && st.mine.comments) || []).map(cleanComment).filter(Boolean)
+        mine.updates = ((st.mine && st.mine.updates) || []).map(cleanUpdate).filter(Boolean)
+        backup()
+      } else {
+        flush()
+      }
+    } catch (e) {
+      setSave('offline')
+      if (stale) notice = { text: e.message, error: true }
+    }
+    refresh()
+  }
+  function downloadReview() {
+    const who = me()
+    const doc = { format: 'design-canvas-review', schemaVersion: 2, app: D.app, exported: nowIso(), author: who ? who.name : 'Reviewer',
+      comments: mine.comments.map(cleanComment).filter(Boolean), updates: mine.updates.map(cleanUpdate).filter(Boolean) }
+    if (!doc.comments.length && !doc.updates.length) return doc
+    const url = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 2) + '\n'], { type: 'application/json' }))
+    const a = h('a', { href: url, download: `review-${slug(D.app)}-${doc.exported.slice(0, 10)}-${who ? who.slug : 'reviewer'}.json` })
+    document.body.append(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 2000)
+    announce('Review file downloaded.')
+    return doc
+  }
+  function openFile(f) {
+    if (!f) return
+    if (f.size > 1_000_000) return alarm('That file is over 1 MB, so it was not opened.')
+    const reader = new FileReader()
+    reader.onload = () => {
+      let doc
+      try {
+        doc = JSON.parse(String(reader.result))
+      } catch {
+        return alarm('That file is not valid JSON.')
+      }
+      const got = fromFile(doc)
+      if (!got) return alarm('That is not a design-canvas review file.')
+      imported = got
+      filter = 'all'
+      announce(`Showing ${got.comments.length} comments from the file.`)
+      refresh()
+    }
+    reader.readAsText(f)
   }
 
   // ---------- hover + selection overlays ----------
@@ -325,42 +395,46 @@
   board.append(hover, selBox)
   let selected = null
   let tab = 'inspect'
-  let filter = 'open'
+  let filter = 'fix'
   let focusId = null
   function place(box, el) {
-    if (!el || !el.isConnected || el.closest('.cv-page')?.hidden) { box.hidden = true; return }
+    if (!el || !el.isConnected || el.closest('.cv-page')?.hidden) {
+      box.hidden = true
+      return
+    }
     const b = board.getBoundingClientRect(), r = el.getBoundingClientRect()
     Object.assign(box.style, { left: `${r.left - b.left}px`, top: `${r.top - b.top}px`, width: `${r.width}px`, height: `${r.height}px` })
     box.hidden = false
   }
-  function pickable(t) {
-    if (!t || t.closest('.dc-ui, .dc-pin')) return null
-    if (t.closest('svg') && t.closest('svg') !== t) t = t.closest('svg')
-    const sc = t.closest('.dev .sc')
-    return sc && t !== sc ? t : null
-  }
   let raf = 0
   board.addEventListener('pointermove', (e) => {
-    if (!C.inspecting() || e.buttons) { hover.hidden = true; return }
+    if (!C.inspecting() || e.buttons) {
+      hover.hidden = true
+      return
+    }
     cancelAnimationFrame(raf)
     raf = requestAnimationFrame(() => {
-      const el = pickable(document.elementFromPoint(e.clientX, e.clientY))
-      if (!el) { hover.hidden = true; return }
+      const el = I.pickable(document.elementFromPoint(e.clientX, e.clientY))
+      if (!el) {
+        hover.hidden = true
+        return
+      }
       place(hover, el)
       const dev = el.closest('.dev')
       const k = dev.getBoundingClientRect().width / dev.offsetWidth || 1
       const r = el.getBoundingClientRect()
-      hover.firstChild.textContent = `${px(r.width / k)} × ${px(r.height / k)}`
+      hover.firstChild.textContent = `${Math.round(r.width / k)} × ${Math.round(r.height / k)}`
     })
   })
   board.addEventListener('pointerleave', () => { hover.hidden = true })
 
-  // ---------- drawer ----------
+  // ---------- the panel ----------
   function setInspect(on) {
     document.body.classList.toggle('dc-inspecting', on)
     btnInspect.setAttribute('aria-pressed', String(on))
     hover.hidden = true
     if (on) openDrawer('inspect')
+    announce(on ? 'Inspect on: click any element on a screen.' : 'Inspect off.')
   }
   function openDrawer(t) {
     tab = t
@@ -381,26 +455,104 @@
   function chip(t) {
     return h('span', { class: `dc-tok${t.unknown ? ' unknown' : ''}`, title: t.via ? `through ${t.via}` : null }, t.name, t.via ? h('small', {}, ` · ${t.via}`) : null)
   }
+  function nameField() {
+    return h('input', { class: 'dc-name', type: 'text', maxlength: '80', placeholder: 'Your name', value: mine.author || '', 'aria-label': 'Your name' })
+  }
+  function composer(onSave, label, placeholder, optional) {
+    const name = me() ? null : nameField()
+    const box = h('textarea', { class: 'dc-text', rows: '3', maxlength: '4000', placeholder, 'aria-label': label })
+    const err = h('p', { class: 'dc-err', role: 'alert' })
+    const go = h('button', {
+      type: 'button', class: 'dc-btn primary',
+      onclick: () => {
+        err.textContent = ''
+        if (name) {
+          const n = clip(name.value.trim(), 80)
+          if (!n) return (err.textContent = 'Add your name first.'), name.focus()
+          mine.author = n
+          backup()
+        }
+        const body = clip(box.value.trim(), 4000)
+        if (!body && !optional) return (err.textContent = 'Write something first.'), box.focus()
+        onSave(body)
+      },
+    }, label)
+    return h('div', { class: 'dc-compose' }, name, box, err, go,
+      !S && mine.author ? h('button', { type: 'button', class: 'dc-link', onclick: () => { mine.author = ''; backup(); render() } }, `Commenting as ${mine.author} · change`) : null)
+  }
+  function statusChip(c) {
+    const s = STATUS[c.status]
+    return h('span', { class: `dc-status g-${s.group}` }, s.label)
+  }
+  function lastLine(c) {
+    const u = c.history[c.history.length - 1]
+    if (!u) return null
+    const via = u.via === 'cli' || u.via === 'mcp' ? ' via agent' : ''
+    return h('p', { class: 'dc-update' }, h('b', {}, STATUS[u.status].label), ` · ${u.by}${via} · `, when(u.at), u.note ? `: ${u.note}` : '')
+  }
+  function inline(parent, label, placeholder, optional, onSave) {
+    const box = h('div', { class: 'dc-reply' }, composer(onSave, label, placeholder, optional))
+    parent.after(box)
+    box.querySelector('textarea').focus()
+  }
+  function actions(c) {
+    const row = h('div', { class: 'dc-actions' })
+    const add = (label, fn) => row.append(h('button', { type: 'button', class: 'dc-link', onclick: fn }, label))
+    const needName = () => { if (!me()) { openDrawer('comments'); alarm('Add your name first: write a comment or reply.'); return true } return false }
+    add('Show', () => show(c))
+    if (!c.replyTo) {
+      const g = STATUS[c.status].group
+      if (g === 'fix' || c.status === 'question') {
+        add('Reply', () => !needName() && inline(row, 'Reply', 'Reply…', false, (b) => addReply(c, b)))
+        add('Mark fix ready', () => !needName() && inline(row, 'Mark fix ready', 'What changed? (optional)', true, (b) => setStatus(c, 'ready', b)))
+      }
+      if (g === 'fix') {
+        add('Ask a question', () => !needName() && inline(row, 'Ask', 'What do you need to know?', false, (b) => setStatus(c, 'question', b)))
+        add("Won't fix", () => !needName() && inline(row, "Won't fix", 'Why not? (optional)', true, (b) => setStatus(c, 'wontfix', b)))
+      }
+      if (c.status === 'ready') {
+        add('Resolve', () => !needName() && setStatus(c, 'resolved', ''))
+        add('Reopen', () => !needName() && inline(row, 'Reopen', "What's still not right? (optional)", true, (b) => setStatus(c, 'open', b || 'Reopened')))
+      }
+      if (g === 'closed') add('Reopen', () => !needName() && inline(row, 'Reopen', "What's still not right? (optional)", true, (b) => setStatus(c, 'open', b || 'Reopened')))
+    }
+    if (isMine(c)) add('Delete', () => remove(c))
+    return row
+  }
+  function card(c, list, number, compact) {
+    const replies = list.filter((x) => x.replyTo === c.id)
+    const scr = D.screens[c.screen]
+    const s = STATUS[c.status]
+    return h('article', { class: `dc-card${focusId === c.id ? ' focus' : ''}`, 'data-id': c.id },
+      h('header', {},
+        number ? h('span', { class: `dc-num g-${s.group}`, 'aria-hidden': 'true' }, String(number) + s.mark) : null,
+        avatar(c.author), h('b', { class: 'dc-who' }, c.author), h('span', { class: 'dc-muted' }, ' · ', when(c.created)),
+        c.replyTo ? null : statusChip(c)),
+      compact || c.replyTo ? null : h('div', { class: 'dc-muted dc-where' }, scr ? scr.title : `${c.screen} (screen not on the canvas)`, c.anchor?.text ? ` · “${c.anchor.text.slice(0, 50)}”` : ''),
+      h('p', { class: 'dc-body' }, c.body),
+      c.replyTo ? null : lastLine(c),
+      actions(c),
+      replies.length ? h('div', { class: 'dc-replies' }, replies.map((r) => card(r, list, 0, true))) : null)
+  }
   function inspectView() {
     if (!selected || !selected.isConnected) {
       return h('div', { class: 'dc-empty' },
-        C.inspecting()
-          ? h('p', {}, 'Click anything on a screen to see its size and the design tokens it uses.')
-          : h('p', {}, 'Turn on ', h('b', {}, 'Inspect'), ' and click anything on a screen to see its size and the design tokens it uses.'),
-        h('p', { class: 'dc-muted' }, 'Tip: press I to switch Inspect on and off, C for comments.'))
+        h('p', {}, C.inspecting() ? 'Click anything on a screen to see its size and the design tokens it uses.' : 'Turn on Inspect and click anything on a screen to see its size and the design tokens it uses.'),
+        h('p', { class: 'dc-muted' }, 'Keys: I inspect, C comments, Esc close.'))
     }
-    const info = inspect(selected)
+    const info = I.inspect(selected)
     const fig = selected.closest('.cv-frame')
     const scr = D.screens[fig.dataset.id] || {}
-    const here = all().filter((c) => c.screen === fig.dataset.id && findAnchor(c)?.el === selected)
+    const list = all()
+    const here = topLevel(list).filter((c) => c.screen === fig.dataset.id && I.findAnchor(c)?.el === selected)
     return h('div', { class: 'dc-inspect' },
       h('div', { class: 'dc-head' },
-        h('code', { class: 'dc-el' }, describeEl(selected)),
+        h('code', { class: 'dc-el' }, I.describeEl(selected)),
         h('div', { class: 'dc-muted' }, `${scr.title || fig.dataset.id} · ${scr.state || ''}`),
         scr.source ? h('code', { class: 'dc-src' }, scr.source) : null,
         info.component ? h('div', {}, 'Component ', h('span', { class: 'dc-tok' }, info.component)) : null),
       h('dl', { class: 'dc-rows' },
-        h('dt', {}, 'Size'), h('dd', {}, `${px(info.w)} × ${px(info.h)}`),
+        h('dt', {}, 'Size'), h('dd', {}, `${info.w} × ${info.h}`),
         info.rows.map((r) => [
           h('dt', {}, r.g.label),
           h('dd', {},
@@ -409,171 +561,98 @@
             r.raw.length ? h('div', { class: 'dc-off' }, 'Off-system: ', r.raw.join(', ')) : null,
             r.notes.length ? h('div', { class: 'dc-muted' }, 'Overridden: ', r.notes.join('; ')) : null,
             r.value ? h('div', { class: 'dc-val' }, r.value) : null,
-            r.from ? h('div', { class: 'dc-muted' }, 'inherited from ', h('code', {}, describeEl(r.from))) : null),
+            r.from ? h('div', { class: 'dc-muted' }, 'inherited from ', h('code', {}, I.describeEl(r.from))) : null),
         ]),
         info.text ? [h('dt', {}, 'Text'), h('dd', { class: 'dc-quote' }, info.text.slice(0, 120))] : null),
       info.flags.length ? h('p', { class: 'dc-off-note' }, `${info.flags.length} value${info.flags.length > 1 ? 's are' : ' is'} typed by hand instead of using a token.`) : null,
-      here.length ? h('div', { class: 'dc-here' }, h('h4', {}, 'Comments here'), here.map((c) => commentCard(c, true))) : null,
-      composer((body) => addComment(selected, body, null)))
+      here.length ? h('div', { class: 'dc-here' }, h('h4', {}, 'Comments here'), here.map((c) => card(c, list, 0, true))) : null,
+      composer((b) => addComment(selected, b), 'Add comment', 'What should change? Be specific: "make this 16 not 14", "use the accent colour"…'))
   }
-  function composer(onSave, label = 'Add comment', placeholder = 'What should change? Be specific: "make this 16 not 14", "use the accent colour"…') {
-    const name = h('input', { class: 'dc-name', type: 'text', maxlength: '80', placeholder: 'Your name', value: local.author || '', 'aria-label': 'Your name' })
-    const box = h('textarea', { class: 'dc-text', rows: '3', maxlength: '4000', placeholder, 'aria-label': 'Comment' })
-    const go = h('button', {
-      type: 'button', class: 'dc-btn primary',
-      onclick: () => {
-        const author = clip(name.value.trim(), 80)
-        const body = clip(box.value.trim(), 4000)
-        if (!author) { name.focus(); return }
-        if (!body) { box.focus(); return }
-        local.author = author
-        onSave(body)
-      },
-    }, label)
-    return h('div', { class: 'dc-compose' }, local.author ? null : name, box, go, local.author ? h('button', { type: 'button', class: 'dc-link', onclick: () => { local.author = ''; save(); render() } }, `Commenting as ${local.author} · change`) : null)
-  }
-  function commentCard(c, compact) {
-    const n = c.replyTo ? null : pinNumber(c.id)
-    const replies = compact ? [] : all().filter((x) => x.replyTo === c.id)
-    const scr = D.screens[c.screen]
-    const isOpen = OPEN.includes(c.status)
-    let replying = null
-    const card = h('article', { class: `dc-card${focusId === c.id ? ' focus' : ''}`, 'data-id': c.id },
-      h('header', {},
-        n ? h('span', { class: `dc-num ${isOpen ? 'is-open' : 'is-closed'}` }, String(n)) : null,
-        h('b', {}, c.author), h('span', { class: 'dc-muted' }, ` · ${c.created.slice(0, 10)}`),
-        h('span', { class: `dc-status s-${c.status}` }, c.status)),
-      compact ? null : h('div', { class: 'dc-muted dc-where' }, scr ? scr.title : `${c.screen} (screen not on the canvas)`, c.anchor?.text ? ` · “${c.anchor.text.slice(0, 50)}”` : ''),
-      h('p', { class: 'dc-body' }, c.body),
-      c.resolution ? h('p', { class: 'dc-resolution' }, h('b', {}, 'Resolution: '), c.resolution) : null,
-      h('div', { class: 'dc-actions' },
-        compact ? null : h('button', { type: 'button', class: 'dc-link', onclick: () => show(c) }, 'Show'),
-        isOpen
-          ? h('button', { type: 'button', class: 'dc-link', onclick: () => setStatus(c, 'resolved') }, 'Resolve')
-          : h('button', { type: 'button', class: 'dc-link', onclick: () => setStatus(c, 'reopened') }, 'Reopen'),
-        c.replyTo ? null : h('button', { type: 'button', class: 'dc-link', onclick: () => { replying.hidden = !replying.hidden } }, 'Reply')),
-      (replying = h('div', { class: 'dc-reply', hidden: true }, composer((body) => addReply(c, body), 'Reply', 'Reply…'))),
-      replies.length ? h('div', { class: 'dc-replies' }, replies.map((r) => commentCard(r, true))) : null)
-    return card
+  function counts(list) {
+    const top = topLevel(list)
+    return {
+      fix: top.filter((c) => STATUS[c.status].group === 'fix').length,
+      check: top.filter((c) => STATUS[c.status].group === 'check').length,
+      all: top.length,
+    }
   }
   function commentsView() {
-    const list = topLevel().filter((c) => filter === 'all' || OPEN.includes(c.status))
-    const file = h('input', { type: 'file', accept: 'application/json,.json', hidden: true, onchange: (e) => openFile(e.target.files[0]) })
-    const mine = local.comments.length
+    const list = all()
+    const n = counts(list)
+    const top = topLevel(list)
+    const shown = top.filter((c) => filter === 'all' || STATUS[c.status].group === filter)
+    const pick = (key, label) => h('button', { type: 'button', 'aria-pressed': String(filter === key), onclick: () => { filter = key; render() } }, `${label} (${n[key]})`)
     return h('div', { class: 'dc-comments' },
-      h('div', { class: 'dc-filter', role: 'group', 'aria-label': 'Filter' },
-        h('button', { type: 'button', class: filter === 'open' ? 'on' : '', onclick: () => { filter = 'open'; render() } }, 'Open'),
-        h('button', { type: 'button', class: filter === 'all' ? 'on' : '', onclick: () => { filter = 'all'; render() } }, 'All')),
-      list.length ? list.map((c) => commentCard(c, false)) : h('p', { class: 'dc-empty' }, filter === 'open' ? 'No open comments.' : 'No comments yet. Turn on Inspect, click an element and add one.'),
-      imported.length ? h('p', { class: 'dc-muted' }, `Showing ${imported.length} comment(s) from an opened file (not saved).`) : null,
-      h('footer', { class: 'dc-foot' },
-        h('button', { type: 'button', class: 'dc-btn primary', disabled: !mine, onclick: () => { exportReview(true) } }, `Send review${mine ? ` (${mine})` : ''}`),
-        h('button', { type: 'button', class: 'dc-btn', onclick: () => file.click() }, 'Open review file'),
-        file,
-        h('p', { class: 'dc-muted' }, 'Comments stay in this browser until you send the review file to the developer.')))
+      h('div', { class: 'dc-filter', role: 'group', 'aria-label': 'Show comments' }, pick('fix', 'Needs fix'), pick('check', 'To check'), pick('all', 'All')),
+      shown.length ? shown.map((c) => card(c, list, top.indexOf(c) + 1, false))
+        : h('p', { class: 'dc-empty' }, filter === 'fix' ? 'Nothing needs a fix.' : filter === 'check' ? 'Nothing to check.' : 'No comments yet. Turn on Inspect, click an element and add one.'),
+      imported.comments.length ? h('p', { class: 'dc-muted' }, `Including ${imported.comments.length} comment(s) from an opened file (not saved).`) : null)
+  }
+  function footer() {
+    const who = me()
+    const file = h('input', { type: 'file', accept: 'application/json,.json', hidden: true, onchange: (e) => openFile(e.target.files[0]) })
+    const parts = []
+    if (S) {
+      const g = git || {}
+      parts.push(h('p', { class: 'dc-gitline' }, avatar(S.me.name), h('b', {}, S.me.name),
+        g.repo ? ` · on ${g.branch || 'no branch'}${g.ahead ? ` · ${g.ahead} to push` : ''}${g.behind ? ` · ${g.behind} new on the remote` : ''}` : ' · not a git repository'))
+      const canGit = g.repo && !g.detached
+      parts.push(h('div', { class: 'dc-buttons' },
+        h('button', { type: 'button', class: 'dc-btn primary', disabled: !canGit, onclick: endReview }, 'End review'),
+        h('button', { type: 'button', class: 'dc-btn', disabled: !canGit || !g.upstream, onclick: getLatest }, 'Get latest'),
+        h('button', { type: 'button', class: 'dc-link', onclick: downloadReview }, 'Download review file')))
+      if (g.repo === false) parts.push(h('p', { class: 'dc-muted' }, g.why || ''))
+    } else {
+      parts.push(h('p', { class: 'dc-gitline' }, who ? [avatar(who.name), h('b', {}, who.name)] : 'Not signed: add your name with your first comment.'))
+      parts.push(h('div', { class: 'dc-buttons' },
+        h('button', { type: 'button', class: 'dc-btn primary', disabled: !(mine.comments.length || mine.updates.length), onclick: downloadReview }, 'Download review file'),
+        h('button', { type: 'button', class: 'dc-btn', onclick: () => file.click() }, 'Open review file'), file))
+    }
+    parts.push(h('p', { class: 'dc-save dc-muted', 'aria-live': 'off' }, SAVE_TEXT[saveState]))
+    if (notice) parts.push(h('p', { class: `dc-notice${notice.error ? ' error' : ''}` }, notice.text))
+    return h('footer', { class: 'dc-foot' }, parts)
   }
   function render() {
     if (drawer.hidden) return
-    const open = topLevel().filter((c) => OPEN.includes(c.status)).length
+    const n = counts(all())
+    const tabBtn = (key, label) => h('button', { type: 'button', 'aria-pressed': String(tab === key), onclick: () => { tab = key; render() } }, label)
+    const focusTarget = document.activeElement && drawer.contains(document.activeElement) ? document.activeElement.textContent : null
     drawer.replaceChildren(
-      h('div', { class: 'dc-tabs', role: 'tablist' },
-        h('button', { type: 'button', role: 'tab', 'aria-selected': String(tab === 'inspect'), onclick: () => { tab = 'inspect'; render() } }, 'Inspect'),
-        h('button', { type: 'button', role: 'tab', 'aria-selected': String(tab === 'comments'), onclick: () => { tab = 'comments'; render() } }, `Comments (${open})`),
-        h('button', { type: 'button', class: 'dc-close', 'aria-label': 'Close', onclick: closeDrawer }, '×')),
-      h('div', { class: 'dc-scroll' }, tab === 'inspect' ? inspectView() : commentsView()))
+      h('div', { class: 'dc-tabs' }, tabBtn('inspect', 'Inspect'), tabBtn('comments', `Comments (${n.fix} to fix · ${n.check} to check)`),
+        h('button', { type: 'button', class: 'dc-close', 'aria-label': 'Close panel', onclick: closeDrawer }, '×')),
+      h('div', { class: 'dc-scroll' }, tab === 'inspect' ? inspectView() : commentsView()),
+      footer())
+    if (focusTarget) [...drawer.querySelectorAll('button')].find((b) => b.textContent === focusTarget)?.focus()
     if (focusId) drawer.querySelector(`.dc-card[data-id="${CSS.escape(focusId)}"]`)?.scrollIntoView({ block: 'nearest' })
   }
   function refresh() {
-    countEl.textContent = String(topLevel().filter((c) => OPEN.includes(c.status)).length)
+    const n = counts(all())
+    countEl.textContent = n.check ? `${n.fix} · ${n.check}✓` : String(n.fix)
+    btnComments.setAttribute('aria-label', `Comments: ${n.fix} need a fix, ${n.check} to check`)
     drawPins()
     render()
-  }
-
-  // ---------- actions ----------
-  function addComment(el, body, replyTo) {
-    const t = nowIso()
-    const info = inspect(el)
-    const tokens = {}
-    for (const r of info.rows) {
-      const name = r.tokens[0]?.name || r.guess?.[0]
-      if (name && !r.tokens[0]?.unknown) tokens[r.g.key] = name
-    }
-    local.comments.push({
-      id: `${slug(local.author)}-${rand()}`, replyTo, screen: el.closest('.cv-frame').dataset.id, built: D.built,
-      anchor: anchorOf(el), tokens, body, author: local.author, status: 'open', created: t, modified: t, resolvedAt: null,
-    })
-    save()
-    refresh()
-  }
-  function addReply(parent, body) {
-    const t = nowIso()
-    local.comments.push({ id: `${slug(local.author)}-${rand()}`, replyTo: parent.id, screen: parent.screen, built: D.built, anchor: parent.anchor, tokens: {}, body, author: local.author, status: 'open', created: t, modified: t, resolvedAt: null })
-    save()
-    refresh()
-  }
-  function setStatus(c, status) {
-    const t = nowIso()
-    const copy = { ...c, status, modified: t, resolvedAt: CLOSED.includes(status) ? t : null }
-    const i = local.comments.findIndex((x) => x.id === c.id)
-    if (i >= 0) local.comments[i] = copy
-    else local.comments.push(copy)
-    save()
-    refresh()
   }
   function show(c) {
     const scr = D.screens[c.screen]
     if (scr && scr.page !== C.current) C.showPage(scr.page, true)
     requestAnimationFrame(() => {
-      const f = findAnchor(c)
+      const f = I.findAnchor(c)
       if (!f) return
       C.zoomToFrame(f.fig)
       focusId = c.id
-      if (f.el) { selected = f.el; requestAnimationFrame(() => place(selBox, f.el)) }
+      if (f.el) {
+        selected = f.el
+        requestAnimationFrame(() => place(selBox, f.el))
+      }
       render()
     })
-  }
-  function reviewDoc() {
-    return { format: 'design-canvas-review', schemaVersion: 1, app: D.app, exported: nowIso(), author: local.author || 'Reviewer', comments: local.comments.map(clean).filter(Boolean) }
-  }
-  function exportReview(download) {
-    const doc = reviewDoc()
-    if (!doc.comments.length) return doc
-    if (download) {
-      const url = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 2) + '\n'], { type: 'application/json' }))
-      const a = h('a', { href: url, download: `review-${slug(D.app)}-${doc.exported.slice(0, 10)}-${slug(doc.author)}.json` })
-      document.body.append(a)
-      a.click()
-      a.remove()
-      setTimeout(() => URL.revokeObjectURL(url), 2000)
-      local.lastExport = doc.exported
-      save()
-    }
-    return doc
-  }
-  function openFile(f) {
-    if (!f) return
-    if (f.size > 1_000_000) { alert('That file is over 1 MB, so it was not opened.'); return }
-    const reader = new FileReader()
-    reader.onload = () => {
-      let doc
-      try { doc = JSON.parse(String(reader.result)) } catch { alert('That file is not valid JSON.'); return }
-      if (!doc || doc.format !== 'design-canvas-review' || doc.schemaVersion !== 1 || !Array.isArray(doc.comments) || doc.comments.length > 500) {
-        alert('That is not a design-canvas review file.')
-        return
-      }
-      imported = doc.comments.map(clean).filter(Boolean)
-      tab = 'comments'
-      filter = 'all'
-      refresh()
-    }
-    reader.readAsText(f)
   }
 
   // ---------- pins ----------
   function drawPins() {
     world.querySelectorAll('.dc-pin').forEach((p) => p.remove())
     topLevel().forEach((c, i) => {
-      const f = findAnchor(c)
+      const f = I.findAnchor(c)
       if (!f || f.fig.closest('.cv-page')?.hidden) return
       const k = f.dev.getBoundingClientRect().width / f.dev.offsetWidth || 1
       let x = 12, y = 12
@@ -585,11 +664,12 @@
         x = f.box.x + f.box.w
         y = f.box.y
       }
-      const isOpen = OPEN.includes(c.status)
+      const s = STATUS[c.status]
       const pin = h('button', {
-        type: 'button', class: `dc-pin ${isOpen ? 'is-open' : 'is-closed'}${f.el ? '' : ' is-detached'}`, 'data-id': c.id,
-        title: `${c.author}: ${c.body.slice(0, 80)}${f.el ? '' : ' (element moved; shown at its old place)'}`,
-      }, String(i + 1))
+        type: 'button', class: `dc-pin g-${s.group}${f.el ? '' : ' is-detached'}`, 'data-id': c.id,
+        'aria-label': `Comment ${i + 1}, ${s.label}, by ${c.author}`,
+        title: `${i + 1} · ${s.label} · ${c.author}: ${c.body.slice(0, 80)}${f.el ? '' : ' (element moved; shown at its old place)'}`,
+      }, String(i + 1) + s.mark)
       pin.style.left = `${Math.min(Math.max(x, 12), f.dev.offsetWidth - 12)}px`
       pin.style.top = `${Math.min(Math.max(y, 12), f.dev.offsetHeight - 12)}px`
       f.dev.append(pin)
@@ -601,17 +681,18 @@
   // ---------- wiring ----------
   btnInspect.addEventListener('click', () => setInspect(!C.inspecting()))
   btnComments.addEventListener('click', () => (drawer.hidden || tab !== 'comments' ? openDrawer('comments') : closeDrawer()))
-  addEventListener('dc:pick', (e) => {
-    const el = pickable(e.detail.target)
-    select(el)
-  })
+  addEventListener('dc:pick', (e) => select(I.pickable(e.detail.target)))
   addEventListener('dc:pin', (e) => {
     const c = all().find((x) => x.id === e.detail.id)
     if (!c) return
     focusId = c.id
+    filter = 'all'
     openDrawer('comments')
-    const f = findAnchor(c)
-    if (f?.el) { selected = f.el; place(selBox, f.el) }
+    const f = I.findAnchor(c)
+    if (f?.el) {
+      selected = f.el
+      place(selBox, f.el)
+    }
   })
   addEventListener('dc:view', () => {
     scalePins()
@@ -633,12 +714,19 @@
   })
   addEventListener('storage', (e) => {
     if (e.key !== KEY) return
-    const v = load()
-    local.author = clip(v.author, 80)
-    local.comments = (Array.isArray(v.comments) ? v.comments : []).map(clean).filter(Boolean)
+    const v = loadLocal()
+    mine.comments = (Array.isArray(v.comments) ? v.comments : []).map(cleanComment).filter(Boolean)
+    mine.updates = (Array.isArray(v.updates) ? v.updates : []).map(cleanUpdate).filter(Boolean)
     refresh()
   })
-  window.DC_REVIEW = { all, inspect, reviewDoc, select, findAnchor }
+  addEventListener('beforeunload', (e) => {
+    if (S && mine.unsent) {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+  })
+  window.DC_REVIEW = { all, merge, mine, reviewDoc: () => ({ comments: mine.comments, updates: mine.updates }), select, flush, loadState, setStatus }
   refresh()
+  if (S) loadState()
   document.fonts?.ready.then(drawPins)
 })()
