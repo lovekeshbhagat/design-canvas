@@ -146,6 +146,25 @@ class Helper(unittest.TestCase):
         self.assertIn("M  design-canvas/app/src/theme.ts", git(self.sam, "status", "--short"), "other staged work is untouched")
         self.assertEqual(self.api(h, "end-review", {})[1]["message"], "Nothing new to send: your review is already pushed.")
 
+    def test_end_review_wont_push_other_unpushed_commits(self):
+        h = self.start(self.sam)
+        (self.sam / "NOTES.md").write_text("draft\n", encoding="utf-8")
+        git(self.sam, "add", "NOTES.md")
+        git(self.sam, "commit", "-qm", "local work")
+        before = git(self.tmp / "remote.git", "rev-parse", "main")
+        self.api(h, "save", {"comments": [self.comment(h)], "updates": []})
+        r = self.api(h, "end-review", {})[1]
+        self.assertFalse(r["ok"])
+        self.assertIn("NOTES.md", r["message"])
+        self.assertEqual(git(self.tmp / "remote.git", "rev-parse", "main"), before, "nothing was pushed")
+        self.assertIn(f"?? design-canvas/reviews/{h.me['slug']}.json", git(self.sam, "status", "--porcelain", "-uall"),
+                      "the review file wasn't committed either")
+        git(self.sam, "push", "-q")
+        r = self.api(h, "end-review", {})[1]
+        self.assertTrue(r["ok"], r)
+        files = git(self.tmp / "remote.git", "show", "--name-only", "--format=", "main").splitlines()
+        self.assertEqual(files, [f"design-canvas/reviews/{h.me['slug']}.json"])
+
     def test_remote_moved_with_other_changes_explains_then_combines_once_clean(self):
         h = self.start(self.sam)
         alex = self.clone("alex", "Alex")

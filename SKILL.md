@@ -1,7 +1,7 @@
 ---
 name: design-canvas
 description: Design guide, design system docs, style guide, design tokens, a "Figma-like" board of every screen, or applying a designer's review. Reads the app's real code into one design.json, then builds a living design guide (tokens, components, contrast and drift checks) and a pan-and-zoom canvas of every screen that designers can inspect and comment on. Use when the user asks for any of these, or to check that design tokens still match the code.
-compatibility: Requires Python 3.9+ (standard library only). No network access needed.
+compatibility: Requires Python 3.9+ (standard library only). Works offline; only the optional review helper (--serve) pushes and pulls with git.
 ---
 
 # design-canvas

@@ -537,15 +537,22 @@ class Design:
             return False
 
         def names_for(key, meta):
-            out = [key]
+            """Names the token may be defined under, most specific first."""
+            out = []
             code = (meta.get("code") or "").strip()
-            if code.startswith("--"):
-                out.append(code.split(")")[0].replace("var(", ""))  # a CSS custom property
+            bare = code.replace("var(", "").split(")")[0].strip()
+            if bare.startswith("--"):
+                out.append(bare)  # a CSS custom property
+            elif code:
+                segs = [x for x in re.split(r"[.\[\]'\"\s/]+", code) if x]
+                if segs:
+                    out.append(segs[-1])  # colors['on-primary'] -> on-primary
+            out.append(key)
             if code:
-                last = [x for x in re.split(r"[.\[\]'\"\s/-]+", code) if x]
-                if last and last[-1] not in out:
-                    out.append(last[-1])
-            return out
+                words = [x for x in re.split(r"[.\[\]'\"\s/()-]+", code) if x]
+                if words:
+                    out.append(words[-1])  # looser: only the last word
+            return [n for i, n in enumerate(out) if n and n not in out[:i]]
 
         def key_rx(name):
             """`name: …`, `name = …`, `name(…`, `"name": …` (any case)."""
@@ -556,12 +563,14 @@ class Design:
             return re.compile(rf"{key_rx(name)}|\bname\s*=\s*['\"]{re.escape(name)}['\"]", re.I)
 
         def block_for(text, names):
-            """The lines that define one of `names` (plus the rest of a multi-line object)."""
+            """The lines that define the most specific of `names` found here (plus the rest of a multi-line object).
+            A looser name is only used when no better one is defined, so 'on-primary' never borrows primary's line."""
             lines = text.split("\n")
-            keep = []
-            for i, l in enumerate(lines):
-                for n in names:
-                    m = defn(n).search(l)
+            for n in names:
+                rx = defn(n)
+                keep = []
+                for i, l in enumerate(lines):
+                    m = rx.search(l)
                     if not m:
                         continue
                     seg = [l[m.start():]]
@@ -572,8 +581,9 @@ class Design:
                         seg.append(lines[j])
                         depth += lines[j].count("{") + lines[j].count("(") - lines[j].count("}") - lines[j].count(")")
                     keep.append("\n".join(seg))
-                    break
-            return "\n".join(keep) if keep else None
+                if keep:
+                    return "\n".join(keep)
+            return None
 
         def number_for(text, block, names, n):
             if block is None:

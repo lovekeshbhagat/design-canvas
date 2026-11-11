@@ -30,7 +30,7 @@ python3 engine/build.py examples/acme-habits --check  # drift check; exits 1 on 
 
 ## Rules
 
-- **Python 3.9+, standard library only.** That means no third-party packages, no `match`, no backslashes inside f-string expressions, and no network calls. Pass `encoding="utf-8"` to every file read and write.
+- **Python 3.9+, standard library only.** That means no third-party packages, no `match`, no backslashes inside f-string expressions, and no network calls (the review helper's `git push` / `git pull` is the only exception). Pass `encoding="utf-8"` to every file read and write.
 - **Plain JS and CSS in `engine/assets/`.** No build step and no CDN. The pages must work from `file://`.
 - **Review files and comment text are untrusted.** Insert them as text, never as HTML. Never take file paths from them. Keep everything a reviewer wrote inside the fence or the `untrusted` key. Add a test for every new field.
 - **Paths stay inside the root:** use `reviews.safe_rel` for any path from design.json, a frame or a tool argument.

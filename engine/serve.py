@@ -13,6 +13,7 @@ Security, because this helper can commit and push:
   - the API takes no paths and no commands; JSON bodies of at most 1 MB
   - the token is never logged; git never prompts (no terminal, no askpass, ssh BatchMode)
   - commits only the person's own review file, never force-pushes, never rewrites history
+  - refuses to push when the branch has other unpushed commits that change other files
 """
 
 from __future__ import annotations
@@ -123,6 +124,12 @@ class Helper:
             self.last_save = time.monotonic()
         return {"ok": True, "file": f.name, "git": self.git_state()}
 
+    def _unpushed_paths(self, st: dict) -> set:
+        """Every file changed by the commits a push would send now (paths from the repo root)."""
+        rng = ["@{u}..HEAD"] if st["upstream"] else ["HEAD", "--not", "--remotes"]
+        out = self.git("log", "--format=", "--name-only", "--no-renames", *rng).stdout
+        return {line.strip() for line in out.splitlines() if line.strip()}
+
     def _precheck(self, need_upstream: bool):
         st = self.git_state()
         if not st["repo"]:
@@ -145,6 +152,12 @@ class Helper:
             rel = st["file"]
             if not (self.repo / rel).exists():
                 return {"ok": False, "message": "You haven't written anything yet.", "git": st}
+            other = sorted(self._unpushed_paths(st) - {rel})
+            if other:
+                more = f" and {len(other) - 1} more" if len(other) > 1 else ""
+                return {"ok": False, "message": "End review only sends your review file, but this branch also has commits that "
+                        f"aren't pushed yet and change other files ({_say(other[0])}{more}). Push those yourself first, or review "
+                        "on a fresh branch, then press End review again.", "git": st}
             committed = False
             if st["unsent"]:
                 c, u = reviews.read_mine(self.d.dir, self.me)
@@ -170,8 +183,8 @@ class Helper:
             if "non-fast-forward" in err or "fetch first" in err or "rejected" in err:
                 if self.git("status", "--porcelain", "--untracked-files=no").stdout.strip():
                     return {"ok": False, "message": "Someone else pushed first, and this copy has other changes, so I won't combine "
-                            "them automatically. Commit or stash your other changes, then press End review again: it will combine "
-                            "your review with theirs." + kept, "git": self.git_state()}
+                            "them automatically. Put your other changes aside (git stash), press End review again to combine your "
+                            "review with theirs, then bring your changes back (git stash pop)." + kept, "git": self.git_state()}
                 pull = self.git("pull", "--rebase", "--no-autostash", timeout=120)
                 if pull.returncode != 0:
                     self.git("rebase", "--abort")

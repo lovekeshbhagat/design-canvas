@@ -40,7 +40,7 @@ python3 engine/build.py design-canvas --serve      # prints a link that only thi
 On the screen board, the reviewer:
 - **inspects** any element (press `I`) to see its size and **the tokens it uses**, by name and per theme (`colors.primary`, `type.label`, `spacing.xl`). Anything typed by hand instead of using a token is flagged as **off-system**.
 - **comments** on it. A numbered pin marks the element, and the comment saves to their own review file as they type.
-- presses **End review**. This commits only their review file and pushes it; other work in their copy is never included.
+- presses **End review**. This commits only their review file and pushes it. If the branch also has other unpushed commits, it stops and says so, so other work is never sent.
 
 The developer pulls, and their coding agent:
 - **lists** the open comments: `--reviews`
@@ -67,7 +67,7 @@ Then open your app's repo and ask for a design guide. [`SKILL.md`](SKILL.md) is 
 | Feature | Works with |
 | --- | --- |
 | Guide, canvas, token export, inspect and comments | Any platform: built from `design.json` and the screens alone. |
-| Drift check (`--check`) | JS/TS theme objects and Tailwind configs, CSS custom properties, iOS `.colorset` files and SwiftUI/UIKit colours and numbers, Android XML resources, Flutter and Compose `Color(0x…)`. Each format has a test in `tests/`. Other formats fall back to a looser search near the `src` line. |
+| Drift check (`--check`) | JS/TS theme objects and Tailwind configs, CSS custom properties, iOS `.colorset` files and SwiftUI/UIKit colours and numbers, Android XML resources, Flutter and Compose `Color(0x…)`. Each format has a test in `tests/test_engine.py`. Other formats fall back to a looser search near the `src` line. |
 | "Used in" lists | JavaScript and TypeScript imports only, for now. |
 | Samples | One made-up React Native app so far. |
 
@@ -99,7 +99,8 @@ Every token in `design.json` carries `src: "path/to/file.ts:12"`. `--check` reop
 
 ## Privacy
 
-- The engine and the MCP server run locally and make no network calls. The MCP server only works inside one project folder.
+- The engine and the MCP server run locally and make no network calls of their own. The MCP server only works inside one project folder.
+- The review helper is the one exception: End review runs `git push` and Get latest runs `git pull`, to the remote your repo already uses.
 - The built pages make one: they load fonts from Google Fonts, unless you build with `--no-web-fonts`.
 - The review helper only answers this computer (127.0.0.1), needs a per-run token, and only ever commits the reviewer's own review file. Without it, comments stay in the browser until the reviewer downloads the file.
 - Your coding agent sees your code while writing `design.json`, as in any AI-assisted work.

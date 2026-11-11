@@ -112,6 +112,22 @@ class DriftCheck(unittest.TestCase):
                          {"Color.kt": kt})
         self.assertEqual((res[0], res[1]), ([], 2))
 
+    def test_tailwind_config(self):
+        tw = ("module.exports = {\n  theme: {\n    extend: {\n      colors: {\n        primary: '#3B5BFD',\n"
+              "        'on-primary': '#FFFFFF',\n      },\n      spacing: { md: '12px', lg: '16px' },\n"
+              "      borderRadius: { card: '16px' },\n    },\n  },\n}\n")
+        good = {"colors": {"primary": {"value": "#3B5BFD", "src": "tailwind.config.js:5"},
+                           "onPrimary": {"value": "#FFFFFF", "code": "on-primary", "src": "tailwind.config.js:6"}},
+                "spacing": {"md": {"value": 12, "src": "tailwind.config.js:8"}},
+                "radii": {"card": {"value": 16, "src": "tailwind.config.js:9"}}}
+        res = self.check(good, {"tailwind.config.js": tw})
+        self.assertEqual((res[0], res[1], res[3]), ([], 4, []))
+        bad = self.check({"spacing": {"md": {"value": 16, "src": "tailwind.config.js:8"}}}, {"tailwind.config.js": tw})
+        self.assertEqual(len(bad[0]), 1, "md is '12px' in the config; lg's 16px on the same line must not count")
+        bad = self.check({"colors": {"onPrimary": {"value": "#3B5BFD", "code": "on-primary", "src": "tailwind.config.js:6"}}},
+                         {"tailwind.config.js": tw})
+        self.assertEqual(len(bad[0]), 1, "#3B5BFD belongs to primary on the line above, not 'on-primary'")
+
     def test_css_custom_properties(self):
         css = ":root {\n  --color-primary: #3b5bfd;\n  --color-on-primary: #ffffff;\n  --space-md: 12px;\n}\n"
         res = self.check({"colors": {"primary": {"value": "#3B5BFD", "code": "--color-primary", "src": "app.css:2"}},
