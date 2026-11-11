@@ -9,7 +9,7 @@ People review the screen board (`out/canvas.html`) by inspecting elements and co
    python3 engine/build.py design-canvas --serve
    ```
    They turn on **Inspect**, click an element, and comment. Comments save to their own review file as they type.
-2. **End review.** This commits only their review file, with no hooks and no signing, and pushes it. It refuses if the branch has other unpushed work.
+2. **End review.** This commits only their review file, with no hooks and no signing, and pushes it. Before pushing, it checks with the remote that the review file is the only thing it would send, and stops if not.
 3. **Fix.** The developer pulls. Their coding agent runs `--reviews`, changes the code, and records each outcome with `--resolve`. The developer commits the code and their review file together, as usual.
 4. **Check.** The reviewer presses **Get latest**. Each comment shows its status and who changed it. They **Resolve** the fixes they're happy with, or **Reopen** the ones that aren't right, then press End review again.
 
@@ -116,10 +116,18 @@ Review files come from other people, and coding agents read them, so:
 
 **Git:**
 - **What End review commits:** `git add -- <your file>`, then `git -c commit.gpgsign=false commit --no-verify --only -- <your file>`, so other staged work is never included.
-- **What End review pushes:** only the current branch, as `git push --no-follow-tags --no-recurse-submodules --no-signed <its remote> HEAD:<its remote branch>`. The refspec is explicit and has no `+`, so push settings such as `push.default`, `push.followTags`, `push.recurseSubmodules` or a remote's push refspec can't add other branches, tags or submodule commits, or turn it into a force-push. A branch with no upstream yet is pushed to `origin` (or the only remote) under its own name.
-- **Other unpushed commits:** if the commits that push would send change any other file (a merge commit's own changes included), End review stops before committing and says which, so a push never carries other work. If git can't list those commits, it stops too.
-- **If the remote moved:** when the working tree is clean, End review runs `git pull --rebase` from that same remote branch and pushes again the same way. Otherwise it explains and changes nothing.
-- **Never:** it never force-pushes, never auto-stashes, and never prompts for credentials (no terminal prompts, no askpass, ssh in batch mode).
+- **The check before every push.** Before committing, again after committing, and again after combining with the remote, End review does four things:
+  1. It fetches and asks the remote for its branch tips (`git ls-remote --heads`).
+  2. It lists every commit a push would add beyond those tips, ignoring replace refs.
+  3. It pushes only if each of those commits has exactly one parent and changes only your review file. A merge, an empty commit, or a commit that touches anything else stops it, and it says which commit.
+  4. It also refuses a remote that has several addresses, or a push address that differs from the fetch address.
+- **What End review pushes:** exactly the commit it checked, to this branch's remote branch: `git push --no-follow-tags --no-recurse-submodules --no-signed <remote> <commit>:<remote branch>`.
+  - There's no `+`, so it is never a force-push.
+  - It sends no tags and no submodule commits.
+  - A branch with no upstream yet goes to `origin`, or to the first remote if there's no `origin`, under its own name.
+- **If the remote moved:** when the working tree is clean, End review runs `git pull --rebase` from that remote branch, checks again, and pushes the same way. Otherwise it explains and changes nothing.
+- **No prompts:** git runs with its input closed, in its own session (no terminal on macOS and Linux), with terminal prompts, askpass and credential prompts off, and ssh in `BatchMode`. (A custom `GIT_SSH` program or plink is left as it is; on macOS and Linux it still has no terminal to prompt in.)
+- **Never:** it never force-pushes and never auto-stashes. The only commits it ever rebases are its own unpushed review commits, when combining with the remote.
 - **Get latest:** `git pull --ff-only`, then rebuilds the pages.
 
 ## Commands

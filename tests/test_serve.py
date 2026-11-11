@@ -207,7 +207,7 @@ class Helper(unittest.TestCase):
         before = git(self.tmp / "remote.git", "rev-parse", "main")
         r = self.api(h, "end-review", {})[1]
         self.assertFalse(r["ok"])
-        self.assertIn("EXTRA.md", r["message"])
+        self.assertIn("is a merge", r["message"])
         self.assertEqual(git(self.tmp / "remote.git", "rev-parse", "main"), before)
 
     def test_retry_works_in_a_folder_with_an_accent(self):
@@ -224,6 +224,70 @@ class Helper(unittest.TestCase):
         r = self.api(h, "end-review", {})[1]
         self.assertTrue(r["ok"], r)
         self.assertEqual(git(self.tmp / "remote.git", "show", "-z", "--name-only", "--format=", "main").strip("\0\n"), rel)
+
+    def refused(self, h, why):
+        before = git(self.tmp / "remote.git", "rev-parse", "main")
+        self.api(h, "save", {"comments": [self.comment(h)], "updates": []})
+        r = self.api(h, "end-review", {})[1]
+        self.assertFalse(r["ok"], r)
+        self.assertIn(why, r["message"])
+        self.assertEqual(git(self.tmp / "remote.git", "rev-parse", "main"), before, "nothing was pushed")
+        return r
+
+    def test_a_commit_pushed_only_to_another_remote_is_not_sent(self):
+        git(self.tmp, "init", "-q", "--bare", "private.git")
+        git(self.sam, "remote", "add", "private", str(self.tmp / "private.git"))
+        (self.sam / "NOTES.md").write_text("only for the private remote\n", encoding="utf-8")
+        git(self.sam, "add", "NOTES.md")
+        git(self.sam, "commit", "-qm", "private work")
+        git(self.sam, "push", "-q", "private", "main")
+        git(self.sam, "switch", "-q", "-c", "review/sam")  # no upstream: what the protected-branch advice leads to
+        self.refused(self.start(self.sam), "NOTES.md")
+        self.assertEqual(git(self.tmp / "remote.git", "branch", "--list", "review/sam"), "")
+
+    def test_a_rewound_remote_branch_is_not_filled_back_in(self):
+        alex = self.clone("alex", "Alex")
+        (alex / "OOPS.md").write_text("pushed by mistake\n", encoding="utf-8")
+        git(alex, "add", "OOPS.md")
+        git(alex, "commit", "-qm", "oops")
+        git(alex, "push", "-q")
+        git(self.sam, "pull", "-q")
+        git(alex, "reset", "-q", "--hard", "HEAD~1")
+        git(alex, "push", "-q", "-f")  # the remote drops the commit; Sam's origin/main still has it
+        self.refused(self.start(self.sam), "OOPS.md")
+
+    def test_a_replace_ref_cannot_hide_a_commit(self):
+        (self.sam / "NOTES.md").write_text("hidden\n", encoding="utf-8")
+        git(self.sam, "add", "NOTES.md")
+        git(self.sam, "commit", "-qm", "hidden work")
+        git(self.sam, "replace", "HEAD", "origin/main")
+        self.refused(self.start(self.sam), "NOTES.md")
+
+    def test_an_empty_commit_is_not_sent(self):
+        git(self.sam, "commit", "-q", "--allow-empty", "-m", "empty")
+        self.refused(self.start(self.sam), "changes nothing")
+
+    def test_a_remote_that_pushes_elsewhere_is_refused(self):
+        git(self.tmp, "init", "-q", "--bare", "other.git")
+        git(self.sam, "config", "remote.origin.pushurl", str(self.tmp / "other.git"))
+        self.refused(self.start(self.sam), "pushes somewhere other")
+        self.assertEqual(git(self.tmp / "other.git", "branch"), "")
+
+    @unittest.skipIf(os.name == "nt", "shell hook")
+    def test_a_commit_made_by_a_hook_is_not_sent(self):
+        hook = self.sam / ".git" / "hooks" / "post-commit"
+        hook.write_text("#!/bin/sh\necho sneaky > SNEAKY.md\ngit add SNEAKY.md\n"
+                        "git -c core.hooksPath=/dev/null commit -q -m sneaky\n", encoding="utf-8")
+        hook.chmod(0o755)
+        self.refused(self.start(self.sam), "SNEAKY.md")
+
+    def test_ssh_always_runs_in_batch_mode(self):
+        git(self.sam, "config", "core.sshCommand", "ssh -i ~/.ssh/other_key")
+        self.assertEqual(self.start(self.sam).ssh, "ssh -i ~/.ssh/other_key -o BatchMode=yes")
+        git(self.sam, "config", "--unset", "core.sshCommand")
+        self.assertEqual(self.start(self.sam).ssh, "ssh -o BatchMode=yes")
+        os.environ["GIT_SSH_COMMAND"] = "ssh -F /dev/null"
+        self.assertEqual(self.start(self.sam).ssh, "ssh -F /dev/null -o BatchMode=yes")
 
     def test_remote_moved_with_other_changes_explains_then_combines_once_clean(self):
         h = self.start(self.sam)

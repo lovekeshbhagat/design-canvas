@@ -523,18 +523,29 @@ class Design:
             cur = {}
             for m in re.finditer(r"['\"]?\b(red|green|blue)['\"]?\s*[:=]\s*['\"]?(0x[0-9a-fA-F]{1,2}|\d*\.\d+|\d+)(\s*/\s*255(?:\.0+)?)?", text, re.I):
                 key, raw, over255 = m.group(1).lower(), m.group(2), m.group(3)
-                if raw.lower().startswith("0x"):
-                    val = int(raw, 16)
-                elif "." in raw and not over255 and float(raw) <= 1.0:
-                    val = float(raw) * 255
-                else:
-                    val = float(raw)
                 if key in cur:
                     cur = {}
-                cur[key] = val
-                if len(cur) == 3 and all(abs(cur[k] - want_v) <= 1 for k, want_v in (("red", r), ("green", g), ("blue", b))):
-                    return True
+                cur[key] = (raw, bool(over255))
+                if len(cur) == 3:
+                    comps = component_values(cur)
+                    if all(abs(comps[k] - want_v) <= 1 for k, want_v in (("red", r), ("green", g), ("blue", b))):
+                        return True
             return False
+
+        def component_values(cur):
+            """red/green/blue as 0-255. Hex and x/255 are already 0-255. Plain numbers are 0-1 when all three are
+            at most 1 (SwiftUI Color(red: 1, green: 0, blue: 0)); otherwise a decimal <= 1 is 0-1 and the rest 0-255."""
+            plain = all(not o and not v.lower().startswith("0x") for v, o in cur.values())
+            unit = plain and all(float(v) <= 1.0 for v, _ in cur.values())
+            out = {}
+            for k, (v, o) in cur.items():
+                if v.lower().startswith("0x"):
+                    out[k] = int(v, 16)
+                elif unit or ("." in v and not o and float(v) <= 1.0):
+                    out[k] = float(v) * 255
+                else:
+                    out[k] = float(v)
+            return out
 
         def names_for(key, meta):
             """Names the token may be defined under, most specific first."""

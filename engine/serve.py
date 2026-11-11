@@ -11,12 +11,13 @@ Security, because this helper can commit and push:
   - every /api request needs the per-run token (X-DC-Token, constant-time compare);
     POSTs also need an exact Origin match; no CORS headers are ever sent
   - the API takes no paths and no commands; JSON bodies of at most 1 MB
-  - the token is never logged; git never prompts (no terminal, no askpass, ssh BatchMode)
-  - commits only the person's own review file, never rewrites history
-  - pushes only the current branch with an explicit `HEAD:<its remote branch>` refspec: no `+` (never a force-push)
-    and no tags or submodules, so push settings (push.default, push.followTags, push.recurseSubmodules, a remote's
-    push refspec) can't widen it
-  - refuses to push when the commits it would send change any other file (merge commits included)
+  - the token is never logged; git never prompts: stdin closed, its own session (no terminal on macOS/Linux),
+    no askpass, credential prompts off, ssh in BatchMode (a custom GIT_SSH program or plink is left as it is)
+  - commits only the person's own review file; only ever rebases its own unpushed review commits
+  - before each push it fetches, asks the remote for its branch tips, and lists every commit the push would add
+    (replace refs ignored). It pushes only if each one has a single parent and changes only the review file, then
+    pushes exactly that checked commit: `<sha>:<its remote branch>`, no `+` (never a force-push), no tags, no
+    submodules. A remote with several URLs, or a push URL that differs from its fetch URL, is refused.
 """
 
 from __future__ import annotations
@@ -54,28 +55,41 @@ class Helper:
         top = self._run(["git", "-C", str(d.dir), "rev-parse", "--show-toplevel"], cwd=None)
         self.repo = Path(top.stdout.strip()).resolve() if top and top.returncode == 0 and top.stdout.strip() else None
         self.last_save = 0.0
+        self.ssh = self._ssh_command()
+
+    def _ssh_command(self):
+        """The ssh command git would use, with BatchMode added so it can never ask for a passphrase or a host key.
+        Same order as git: GIT_SSH_COMMAND, then core.sshCommand, then GIT_SSH (a bare program: left alone), then ssh."""
+        cmd = os.environ.get("GIT_SSH_COMMAND", "").strip()
+        if not cmd and self.repo:
+            p = self._run(["git", "config", "core.sshCommand"], cwd=self.repo)
+            cmd = p.stdout.strip() if p else ""
+        if cmd:
+            return cmd if "plink" in cmd.lower() else cmd + " -o BatchMode=yes"
+        return None if os.environ.get("GIT_SSH") else "ssh -o BatchMode=yes"
 
     # ---------------------------------------------------------- git
     def _env(self):
         env = dict(os.environ)
         env.update(GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="design-canvas-no-askpass", SSH_ASKPASS="design-canvas-no-askpass",
                    GCM_INTERACTIVE="never", LC_ALL="C")
-        if "GIT_SSH_COMMAND" not in env:
-            p = self._run(["git", "config", "core.sshCommand"], cwd=self.repo, env=None) if getattr(self, "repo", None) else None
-            if not (p and p.stdout.strip()):
-                env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
+        if getattr(self, "ssh", None):
+            env["GIT_SSH_COMMAND"] = self.ssh
         return env
 
     @staticmethod
-    def _run(cmd, cwd=None, env=None, timeout=60):
+    def _run(cmd, cwd=None, env=None, timeout=60, input=None):
+        """Run without a terminal: stdin closed (or fed `input`) and, on macOS/Linux, in a new session."""
         try:
             return subprocess.run(cmd, cwd=str(cwd) if cwd else None, env=env, capture_output=True, text=True,
-                                  encoding="utf-8", errors="replace", timeout=timeout)
+                                  encoding="utf-8", errors="replace", timeout=timeout, input=input,
+                                  stdin=subprocess.DEVNULL if input is None else None, start_new_session=os.name != "nt")
         except (OSError, subprocess.SubprocessError):
             return None
 
-    def git(self, *args, timeout=60):
-        p = self._run(["git", *args], cwd=self.repo, env=self._env(), timeout=timeout)
+    def git(self, *args, timeout=60, input=None):
+        p = self._run(["git", "-c", "credential.interactive=false", *args], cwd=self.repo, env=self._env(), timeout=timeout,
+                      input=input)
         if p is None:
             return subprocess.CompletedProcess(args, 1, "", "git did not finish (timed out or could not start)")
         return p
@@ -128,14 +142,46 @@ class Helper:
             self.last_save = time.monotonic()
         return {"ok": True, "file": f.name, "git": self.git_state()}
 
-    def _unpushed_paths(self, st: dict) -> set | None:
-        """Every file changed by the commits a push would send now (paths from the repo root), or None if git can't say.
-        -z keeps paths unquoted (accents and all); --cc also lists files a merge commit changes itself."""
-        rng = ["@{u}..HEAD"] if st["upstream"] else ["HEAD", "--not", "--remotes"]
-        p = self.git("log", "-z", "--format=", "--name-only", "--no-renames", "--cc", *rng)
-        if p.returncode != 0:
-            return None
-        return {unicodedata.normalize("NFC", x.strip("\n")) for x in p.stdout.split("\0") if x.strip("\n")}
+    def _remote_tips(self, remote: str):
+        """([commit ids], None): the remote's branch tips that this copy also has, after a fetch. Or (None, why not)."""
+        urls = self.git("remote", "get-url", "--all", remote).stdout.split()
+        pushes = self.git("remote", "get-url", "--push", "--all", remote).stdout.split()
+        if len(urls) != 1 or pushes != urls:
+            return None, f"the remote {remote} has several addresses, or pushes somewhere other than it fetches from"
+        if self.git("fetch", "-q", "--no-tags", "--no-recurse-submodules", remote, timeout=120).returncode != 0:
+            return None, f"couldn't fetch from {remote}"
+        ls = self.git("ls-remote", "--heads", remote, timeout=120)
+        if ls.returncode != 0:
+            return None, f"couldn't list the branches on {remote}"
+        shas = sorted({line.split("\t", 1)[0] for line in ls.stdout.splitlines() if "\t" in line})
+        if not shas:
+            return [], None
+        chk = self.git("--no-replace-objects", "cat-file", "--batch-check", input="".join(x + "\n" for x in shas))
+        return [ln.split()[0] for ln in chk.stdout.splitlines() if ln.split()[1:2] == ["commit"]], None
+
+    def _outgoing(self, tips: list, rel: str):
+        """(None, sha of HEAD) when every commit a push of HEAD would add, beyond the remote's tips, has one parent and
+        changes only `rel`. Otherwise (why not, None). Replace refs are ignored, so they can't hide a commit."""
+        head = self.git("rev-parse", "--verify", "-q", "HEAD^{commit}").stdout.strip()
+        revs = self.git("--no-replace-objects", "rev-list", "--parents", "--max-count=201", "--stdin",
+                        input=head + "\n" + "".join(f"^{t}\n" for t in tips)) if head else None
+        if not head or revs.returncode != 0:
+            return "git couldn't list the commits a push would send", None
+        lines = revs.stdout.splitlines()
+        if len(lines) > 200:
+            return "more than 200 commits", None
+        want = unicodedata.normalize("NFC", rel)
+        for line in lines:
+            c, *parents = line.split()
+            if len(parents) != 1:
+                return f"commit {c[:7]} is a merge or a first commit", None
+            d = self.git("--no-replace-objects", "diff-tree", "--no-commit-id", "--no-renames", "-r", "-z", "--name-only", c)
+            files = {unicodedata.normalize("NFC", x) for x in d.stdout.split("\0") if x}
+            if d.returncode != 0 or files != {want}:
+                other = sorted(files - {want})
+                more = f" and {len(other) - 1} more" if len(other) > 1 else ""
+                return (f"commit {c[:7]} changes {_say(other[0])}{more}" if other else f"commit {c[:7]} changes nothing"), None
+        return None, head
 
     def _target(self, st: dict):
         """(remote, branch ref on the remote, new?) for pushing only this branch, or (None, None, why)."""
@@ -148,13 +194,13 @@ class Helper:
             return None, None, f"The branch {br} tracks something End review can't push to. Push once with git, then try again."
         return ("origin" if "origin" in st["remotes"] else st["remotes"][0]), f"refs/heads/{br}", True
 
-    def _push(self, st: dict):
-        """Push HEAD to this branch's remote branch only: explicit refspec, no '+', no tags, no submodules, no signing prompt."""
-        remote, ref, new = self._target(st)
-        if remote is None:
-            return subprocess.CompletedProcess([], 1, "", new)
-        return self.git("push", "--no-follow-tags", "--no-recurse-submodules", "--no-signed", *(["-u"] if new else []),
-                        remote, f"HEAD:{ref}", timeout=120)
+    def _push(self, st: dict, remote: str, ref: str, new: bool, sha: str):
+        """Push exactly the checked commit to this branch's remote branch: no '+', no tags, no submodules, no signing."""
+        p = self.git("push", "--no-follow-tags", "--no-recurse-submodules", "--no-signed", remote, f"{sha}:{ref}", timeout=120)
+        if p.returncode == 0 and new:
+            self.git("config", f"branch.{st['branch']}.remote", remote)
+            self.git("config", f"branch.{st['branch']}.merge", ref)
+        return p
 
     def _precheck(self, need_upstream: bool):
         st = self.git_state()
@@ -178,16 +224,16 @@ class Helper:
             rel = st["file"]
             if not (self.repo / rel).exists():
                 return {"ok": False, "message": "You haven't written anything yet.", "git": st}
-            paths = self._unpushed_paths(st)
-            if paths is None:
-                return {"ok": False, "message": "Couldn't check what a push would send, so nothing was sent. "
-                        "Run git status in a terminal to see what's wrong.", "git": st}
-            other = sorted(paths - {unicodedata.normalize("NFC", rel)})
-            if other:
-                more = f" and {len(other) - 1} more" if len(other) > 1 else ""
-                return {"ok": False, "message": "End review only sends your review file, but this branch also has commits that "
-                        f"aren't pushed yet and change other files ({_say(other[0])}{more}). Push those yourself first, or review "
-                        "on a fresh branch, then press End review again.", "git": st}
+            remote, ref, new = self._target(st)
+            if remote is None:
+                return {"ok": False, "message": new, "git": st}
+            tips, why = self._remote_tips(remote)
+            if why is None:
+                why, _ = self._outgoing(tips, rel)
+            if why:
+                return {"ok": False, "message": f"Nothing was sent. End review only sends your review file, and here {why}. "
+                        "Push other work yourself first, or review on a fresh branch made from the remote's branch, then "
+                        "press End review again.", "git": st}
             committed = False
             if st["unsent"]:
                 c, u = reviews.read_mine(self.d.dir, self.me)
@@ -199,7 +245,10 @@ class Helper:
                 committed = True
             elif st["upstream"] and st["ahead"] == 0:
                 return {"ok": True, "message": "Nothing new to send: your review is already pushed.", "git": st}
-            push = self._push(st)
+            why, sha = self._outgoing(tips, rel)
+            if why:
+                return {"ok": False, "message": f"Nothing was pushed: after committing your review, {why}.", "git": self.git_state()}
+            push = self._push(st, remote, ref, new, sha)
             if push.returncode == 0:
                 return {"ok": True, "message": f"Review sent: pushed to {self.git_state()['upstream'] or 'the remote'}.", "git": self.git_state()}
             err = (push.stderr or push.stdout).lower()
@@ -215,15 +264,18 @@ class Helper:
                     return {"ok": False, "message": "Someone else pushed first, and this copy has other changes, so I won't combine "
                             "them automatically. Put your other changes aside (git stash), press End review again to combine your "
                             "review with theirs, then bring your changes back (git stash pop)." + kept, "git": self.git_state()}
-                remote, ref, _ = self._target(st)
-                if remote is None:
-                    return {"ok": False, "message": "Push failed: " + _say(push.stderr or push.stdout) + kept, "git": self.git_state()}
                 pull = self.git("-c", "commit.gpgsign=false", "pull", "--rebase", "--no-autostash", remote, ref, timeout=120)
                 if pull.returncode != 0:
                     self.git("rebase", "--abort")
                     return {"ok": False, "message": "Someone else pushed first, and their changes couldn't be combined with yours "
                             "automatically. Ask your developer to pull and push." + kept, "git": self.git_state()}
-                again = self._push(st)
+                tips, why = self._remote_tips(remote)
+                if why is None:
+                    why, sha = self._outgoing(tips, rel)
+                if why:
+                    return {"ok": False, "message": f"Nothing was pushed: after combining with the remote, {why}." + kept,
+                            "git": self.git_state()}
+                again = self._push(st, remote, ref, new, sha)
                 if again.returncode == 0:
                     self._rebuild()
                     return {"ok": True, "message": "Review sent (combined with newer changes from the remote first).", "reload": True, "git": self.git_state()}

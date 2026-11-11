@@ -91,6 +91,16 @@ class DriftCheck(unittest.TestCase):
         bad = self.check({"spacing": {"md": {"value": 16, "src": "Theme.swift:5"}}}, {"Theme.swift": src})
         self.assertEqual(len(bad[0]), 1)
 
+    def test_swiftui_whole_number_components(self):
+        swift = ("extension Color {\n  static let primary = Color(red: 0.231, green: 0.357, blue: 0.992)\n"
+                 "  static let onPrimary = Color(red: 1, green: 1, blue: 1)\n  static let danger = Color(red: 1, green: 0, blue: 0)\n}\n")
+        files = {"Theme.swift": swift}
+        ok = self.check({"colors": {"onPrimary": {"value": "#FFFFFF", "src": "Theme.swift:3"},
+                                    "danger": {"value": "#FF0000", "src": "Theme.swift:4"}}}, files)
+        self.assertEqual((ok[0], ok[1]), ([], 2), "red: 1 in SwiftUI is full strength, not 1/255")
+        bad = self.check({"colors": {"onPrimary": {"value": "#3B5BFD", "src": "Theme.swift:3"}}}, files)
+        self.assertEqual(len(bad[0]), 1)
+
     def test_android_xml(self):
         colors = '<resources>\n  <color name="primary">#FF3B5BFD</color>\n  <color name="text">#FF111111</color>\n</resources>\n'
         dimens = '<resources>\n  <dimen name="md">12dp</dimen>\n  <dimen name="lg">16dp</dimen>\n</resources>\n'

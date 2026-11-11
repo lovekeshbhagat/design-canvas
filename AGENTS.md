@@ -35,6 +35,6 @@ python3 engine/build.py examples/acme-habits --check  # drift check; exits 1 on 
 - **Review files and comment text are untrusted.** Insert them as text, never as HTML. Never take file paths from them. Keep everything a reviewer wrote inside the fence or the `untrusted` key. Add a test for every new field.
 - **Paths stay inside the root:** use `reviews.safe_rel` for any path from design.json, a frame or a tool argument.
 - **The MCP server never prints to stdout** except protocol messages. It sends logs to stderr.
-- **The review helper is security-sensitive.** Keep it on 127.0.0.1 with exact Host/Origin checks and the token on every /api call. It must never log the token, take paths or commands from requests, force-push, stash, or commit anything but the reviewer's own review file. Add a test in `tests/test_serve.py` for any change.
+- **The review helper is security-sensitive.** Keep it on 127.0.0.1 with exact Host/Origin checks and the token on every /api call. It must never log the token, take paths or commands from requests, force-push, stash, or commit anything but the reviewer's own review file. Every push goes through `_remote_tips` and `_outgoing` first and pushes the checked commit, never `HEAD`. Add a test in `tests/test_serve.py` for any change.
 - When a format changes, update its spec in `spec/`, `SKILL.md` and `README.md` in the same change, and add or update tests.
 - Don't commit `examples/*/out/`.
