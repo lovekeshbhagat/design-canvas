@@ -2,7 +2,7 @@
 
 Runs on one person's own computer (127.0.0.1 only). It serves the built pages, saves that
 person's comments into their own review file, and turns two buttons into git:
-  End review   commit only their review file (no hooks, no signing) and push
+  End review   commit only their review file (--no-verify, no signing) and push
   Get latest   pull --ff-only and rebuild the pages
 Git is what shares reviews between people; there is no shared server.
 
@@ -14,10 +14,12 @@ Security, because this helper can commit and push:
   - the token is never logged; git never prompts: stdin closed, its own session (no terminal on macOS/Linux),
     no askpass, credential prompts off, ssh in BatchMode (a custom GIT_SSH program or plink is left as it is)
   - commits only the person's own review file; only ever rebases its own unpushed review commits
-  - before each push it fetches, asks the remote for its branch tips, and lists every commit the push would add
-    (replace refs ignored). It pushes only if each one has a single parent and changes only the review file, then
-    pushes exactly that checked commit: `<sha>:<its remote branch>`, no `+` (never a force-push), no tags, no
-    submodules. A remote with several URLs, or a push URL that differs from its fetch URL, is refused.
+  - before each push it asks the remote where this branch is (all its branches, for a branch it doesn't have yet),
+    fetches it, and lists every commit the push would add (replace refs ignored). It pushes only if each one has a
+    single parent and changes only the review file (compared byte for byte), then pushes exactly that checked commit:
+    `<sha>:<its remote branch>`, no `+` (never a force-push), no tags, no submodules. Before combining with newer
+    remote changes it checks again, so the only commits it ever rebases are the reviewer's own review commits.
+    A remote with several URLs, or a push URL that differs from its fetch URL, is refused.
 """
 
 from __future__ import annotations
@@ -29,7 +31,6 @@ import subprocess
 import sys
 import threading
 import time
-import unicodedata
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -65,7 +66,8 @@ class Helper:
             p = self._run(["git", "config", "core.sshCommand"], cwd=self.repo)
             cmd = p.stdout.strip() if p else ""
         if cmd:
-            return cmd if "plink" in cmd.lower() else cmd + " -o BatchMode=yes"
+            prog = os.path.basename(cmd.split()[0].strip("'\"")).lower()
+            return cmd if prog.startswith(("plink", "tortoiseplink")) else cmd + " -o BatchMode=yes"
         return None if os.environ.get("GIT_SSH") else "ssh -o BatchMode=yes"
 
     # ---------------------------------------------------------- git
@@ -142,26 +144,40 @@ class Helper:
             self.last_save = time.monotonic()
         return {"ok": True, "file": f.name, "git": self.git_state()}
 
-    def _remote_tips(self, remote: str):
-        """([commit ids], None): the remote's branch tips that this copy also has, after a fetch. Or (None, why not)."""
-        urls = self.git("remote", "get-url", "--all", remote).stdout.split()
-        pushes = self.git("remote", "get-url", "--push", "--all", remote).stdout.split()
+    def _remote_base(self, remote: str, ref: str):
+        """What the remote already has for this push, after a fetch: (commit ids, the branch's tip there or None, None).
+        That is the tip of `ref`, or, for a branch the remote doesn't have yet, every branch tip this copy also has.
+        (None, None, why not) when it can't tell."""
+        urls = [u.strip() for u in self.git("remote", "get-url", "--all", remote).stdout.splitlines() if u.strip()]
+        pushes = [u.strip() for u in self.git("remote", "get-url", "--push", "--all", remote).stdout.splitlines() if u.strip()]
         if len(urls) != 1 or pushes != urls:
-            return None, f"the remote {remote} has several addresses, or pushes somewhere other than it fetches from"
-        if self.git("fetch", "-q", "--no-tags", "--no-recurse-submodules", remote, timeout=120).returncode != 0:
-            return None, f"couldn't fetch from {remote}"
+            return None, None, f"the remote {remote} has several addresses, or pushes somewhere other than it fetches from"
         ls = self.git("ls-remote", "--heads", remote, timeout=120)
         if ls.returncode != 0:
-            return None, f"couldn't list the branches on {remote}"
-        shas = sorted({line.split("\t", 1)[0] for line in ls.stdout.splitlines() if "\t" in line})
+            return None, None, f"couldn't list the branches on {remote}"
+        heads = [line.split("\t", 1) for line in ls.stdout.splitlines() if "\t" in line]
+        mine = sorted({sha for sha, name in heads if name.strip() == ref})
+        if self.git("fetch", "-q", "--no-tags", "--no-recurse-submodules", remote, *([ref] if mine else []),
+                    timeout=120).returncode != 0:
+            return None, None, f"couldn't fetch from {remote}"
+        shas = mine or sorted({sha for sha, _ in heads})
         if not shas:
-            return [], None
+            return [], None, None
         chk = self.git("--no-replace-objects", "cat-file", "--batch-check", input="".join(x + "\n" for x in shas))
-        return [ln.split()[0] for ln in chk.stdout.splitlines() if ln.split()[1:2] == ["commit"]], None
+        have = [ln.split()[0] for ln in chk.stdout.splitlines() if ln.split()[1:2] == ["commit"]]
+        if mine and len(have) != 1:
+            return None, None, f"couldn't get {ref} from {remote}"
+        return have, (have[0] if mine else None), None
 
-    def _outgoing(self, tips: list, rel: str):
-        """(None, sha of HEAD) when every commit a push of HEAD would add, beyond the remote's tips, has one parent and
-        changes only `rel`. Otherwise (why not, None). Replace refs are ignored, so they can't hide a commit."""
+    def _git_path(self, rel: str) -> str:
+        """The review file's path exactly as git spells it, so a look-alike Unicode spelling counts as another file."""
+        p = self.git("--literal-pathspecs", "ls-files", "-z", "--cached", "--others", "--full-name", "--", rel)
+        names = [x for x in p.stdout.split("\0") if x] if p.returncode == 0 else []
+        return names[0] if len(names) == 1 else rel
+
+    def _outgoing(self, tips: list, want: str):
+        """(None, sha of HEAD) when every commit a push of HEAD would add, beyond `tips`, has one parent and changes only
+        the path `want` (byte for byte). Otherwise (why not, None). Replace refs are ignored, so they can't hide a commit."""
         head = self.git("rev-parse", "--verify", "-q", "HEAD^{commit}").stdout.strip()
         revs = self.git("--no-replace-objects", "rev-list", "--parents", "--max-count=201", "--stdin",
                         input=head + "\n" + "".join(f"^{t}\n" for t in tips)) if head else None
@@ -170,13 +186,12 @@ class Helper:
         lines = revs.stdout.splitlines()
         if len(lines) > 200:
             return "more than 200 commits", None
-        want = unicodedata.normalize("NFC", rel)
         for line in lines:
             c, *parents = line.split()
             if len(parents) != 1:
                 return f"commit {c[:7]} is a merge or a first commit", None
             d = self.git("--no-replace-objects", "diff-tree", "--no-commit-id", "--no-renames", "-r", "-z", "--name-only", c)
-            files = {unicodedata.normalize("NFC", x) for x in d.stdout.split("\0") if x}
+            files = {x for x in d.stdout.split("\0") if x}
             if d.returncode != 0 or files != {want}:
                 other = sorted(files - {want})
                 more = f" and {len(other) - 1} more" if len(other) > 1 else ""
@@ -227,9 +242,10 @@ class Helper:
             remote, ref, new = self._target(st)
             if remote is None:
                 return {"ok": False, "message": new, "git": st}
-            tips, why = self._remote_tips(remote)
+            want = self._git_path(rel)
+            base, _, why = self._remote_base(remote, ref)
             if why is None:
-                why, _ = self._outgoing(tips, rel)
+                why, _ = self._outgoing(base, want)
             if why:
                 return {"ok": False, "message": f"Nothing was sent. End review only sends your review file, and here {why}. "
                         "Push other work yourself first, or review on a fresh branch made from the remote's branch, then "
@@ -245,7 +261,8 @@ class Helper:
                 committed = True
             elif st["upstream"] and st["ahead"] == 0:
                 return {"ok": True, "message": "Nothing new to send: your review is already pushed.", "git": st}
-            why, sha = self._outgoing(tips, rel)
+            want = self._git_path(rel)
+            why, sha = self._outgoing(base, want)
             if why:
                 return {"ok": False, "message": f"Nothing was pushed: after committing your review, {why}.", "git": self.git_state()}
             push = self._push(st, remote, ref, new, sha)
@@ -264,14 +281,20 @@ class Helper:
                     return {"ok": False, "message": "Someone else pushed first, and this copy has other changes, so I won't combine "
                             "them automatically. Put your other changes aside (git stash), press End review again to combine your "
                             "review with theirs, then bring your changes back (git stash pop)." + kept, "git": self.git_state()}
-                pull = self.git("-c", "commit.gpgsign=false", "pull", "--rebase", "--no-autostash", remote, ref, timeout=120)
-                if pull.returncode != 0:
+                base, onto, why = self._remote_base(remote, ref)
+                if why is None and onto is None:
+                    why = "the remote's branch couldn't be found"
+                if why is None:
+                    why, _ = self._outgoing(base, want)  # exactly what a rebase onto `onto` would replay
+                if why:
+                    return {"ok": False, "message": f"Someone else pushed first. Nothing was combined or pushed: {why}." + kept,
+                            "git": self.git_state()}
+                rb = self.git("-c", "commit.gpgsign=false", "rebase", "--no-autostash", onto, timeout=120)
+                if rb.returncode != 0:
                     self.git("rebase", "--abort")
                     return {"ok": False, "message": "Someone else pushed first, and their changes couldn't be combined with yours "
                             "automatically. Ask your developer to pull and push." + kept, "git": self.git_state()}
-                tips, why = self._remote_tips(remote)
-                if why is None:
-                    why, sha = self._outgoing(tips, rel)
+                why, sha = self._outgoing(base, want)
                 if why:
                     return {"ok": False, "message": f"Nothing was pushed: after combining with the remote, {why}." + kept,
                             "git": self.git_state()}

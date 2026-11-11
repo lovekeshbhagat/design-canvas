@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unicodedata
 import unittest
 from pathlib import Path
 
@@ -280,6 +281,82 @@ class Helper(unittest.TestCase):
                         "git -c core.hooksPath=/dev/null commit -q -m sneaky\n", encoding="utf-8")
         hook.chmod(0o755)
         self.refused(self.start(self.sam), "SNEAKY.md")
+
+    def feature_merged_into_sams_main(self):
+        alex = self.clone("alex", "Alex")
+        git(alex, "switch", "-q", "-c", "feature/redesign")
+        (alex / "UNREVIEWED.md").write_text("not reviewed yet\n", encoding="utf-8")
+        git(alex, "add", "UNREVIEWED.md")
+        git(alex, "commit", "-qm", "unreviewed")
+        git(alex, "push", "-q", "origin", "feature/redesign")
+        git(self.sam, "fetch", "-q")
+        git(self.sam, "merge", "-q", "--ff-only", "origin/feature/redesign")
+        return alex
+
+    def test_another_branchs_commit_is_not_sent_to_this_branch(self):
+        self.feature_merged_into_sams_main()
+        head = git(self.sam, "rev-parse", "HEAD")
+        self.refused(self.start(self.sam), "UNREVIEWED.md")
+        self.assertEqual(git(self.sam, "rev-parse", "HEAD"), head, "nothing committed or rebased")
+
+    def test_another_branchs_commit_is_not_rebased_when_the_remote_moved(self):
+        alex = self.feature_merged_into_sams_main()
+        git(alex, "switch", "-q", "main")
+        (alex / "NEWS.md").write_text("pushed to main\n", encoding="utf-8")
+        git(alex, "add", "NEWS.md")
+        git(alex, "commit", "-qm", "news")
+        git(alex, "push", "-q")
+        head = git(self.sam, "rev-parse", "HEAD")
+        self.refused(self.start(self.sam), "UNREVIEWED.md")
+        self.assertEqual(git(self.sam, "rev-parse", "HEAD"), head, "nothing committed or rebased")
+
+    def test_a_rewind_during_the_push_does_not_rebase_other_commits(self):
+        alex = self.clone("alex", "Alex")
+        (alex / "OOPS.md").write_text("will be dropped\n", encoding="utf-8")
+        git(alex, "add", "OOPS.md")
+        git(alex, "commit", "-qm", "oops")
+        git(alex, "push", "-q")
+        oops = git(alex, "rev-parse", "HEAD")
+        git(self.sam, "pull", "-q")
+        h = self.start(self.sam)
+        real_push = h._push
+
+        def push_after_a_rewind(*a, **kw):  # someone rewinds main between the check and the push
+            h._push = real_push
+            git(alex, "reset", "-q", "--hard", "HEAD~1")
+            (alex / "NEWS.md").write_text("new\n", encoding="utf-8")
+            git(alex, "add", "NEWS.md")
+            git(alex, "commit", "-qm", "news")
+            git(alex, "push", "-q", "-f")
+            return real_push(*a, **kw)
+
+        h._push = push_after_a_rewind
+        self.api(h, "save", {"comments": [self.comment(h)], "updates": []})
+        r = self.api(h, "end-review", {})[1]
+        self.assertFalse(r["ok"], r)
+        self.assertIn("Nothing was combined or pushed", r["message"])
+        self.assertIn("OOPS.md", r["message"])
+        self.assertEqual(git(self.sam, "rev-parse", "HEAD~1"), oops, "Sam's review commit still sits on the original commit: nothing was rebased")
+        self.assertNotIn("OOPS.md", git(self.tmp / "remote.git", "show", "--name-only", "--format=", "main"))
+
+    def test_a_lookalike_unicode_path_is_another_file(self):
+        git(self.sam, "mv", "design-canvas", "caf\u00e9")
+        git(self.sam, "commit", "-qm", "rename")
+        git(self.sam, "push", "-q")
+        git(self.sam, "config", "core.precomposeunicode", "false")
+        d = Design(self.sam / "caf\u00e9")
+        server, h = serve.start(d, d.root, 0, False, None, build.build_all, build.script_json)
+        self.servers.append(server)
+        self.api(h, "save", {"comments": [self.comment(h)], "updates": []})
+        rel = f"caf\u00e9/reviews/{h.me['slug']}.json"
+        blob = git(self.sam, "hash-object", "-w", "--", rel)
+        twin = unicodedata.normalize("NFD", rel)
+        git(self.sam, "update-index", "--add", "--cacheinfo", f"100644,{blob},{twin}")
+        git(self.sam, "commit", "-qm", "a look-alike path")
+        before = git(self.tmp / "remote.git", "rev-parse", "main")
+        r = self.api(h, "end-review", {})[1]
+        self.assertFalse(r["ok"], r)
+        self.assertEqual(git(self.tmp / "remote.git", "rev-parse", "main"), before)
 
     def test_ssh_always_runs_in_batch_mode(self):
         git(self.sam, "config", "core.sshCommand", "ssh -i ~/.ssh/other_key")

@@ -9,7 +9,7 @@ People review the screen board (`out/canvas.html`) by inspecting elements and co
    python3 engine/build.py design-canvas --serve
    ```
    They turn on **Inspect**, click an element, and comment. Comments save to their own review file as they type.
-2. **End review.** This commits only their review file, with no hooks and no signing, and pushes it. Before pushing, it checks with the remote that the review file is the only thing it would send, and stops if not.
+2. **End review.** This commits only their review file, with `--no-verify` and no signing, and pushes it. Before pushing, it checks with the remote that the review file is the only thing it would send, and stops if not.
 3. **Fix.** The developer pulls. Their coding agent runs `--reviews`, changes the code, and records each outcome with `--resolve`. The developer commits the code and their review file together, as usual.
 4. **Check.** The reviewer presses **Get latest**. Each comment shows its status and who changed it. They **Resolve** the fixes they're happy with, or **Reopen** the ones that aren't right, then press End review again.
 
@@ -115,19 +115,22 @@ Review files come from other people, and coding agents read them, so:
 - **Bodies** are JSON, at most 1 MB. The API takes no paths and no commands.
 
 **Git:**
-- **What End review commits:** `git add -- <your file>`, then `git -c commit.gpgsign=false commit --no-verify --only -- <your file>`, so other staged work is never included.
-- **The check before every push.** Before committing, again after committing, and again after combining with the remote, End review does four things:
-  1. It fetches and asks the remote for its branch tips (`git ls-remote --heads`).
-  2. It lists every commit a push would add beyond those tips, ignoring replace refs.
-  3. It pushes only if each of those commits has exactly one parent and changes only your review file. A merge, an empty commit, or a commit that touches anything else stops it, and it says which commit.
-  4. It also refuses a remote that has several addresses, or a push address that differs from the fetch address.
+- **What End review commits:** `git add -- <your file>`, then `git -c commit.gpgsign=false commit --no-verify --only -- <your file>`, so other staged work is never included. `--no-verify` skips the pre-commit and commit-msg hooks; other hooks (such as post-commit and pre-push) still run, and the check below catches anything they add.
+- **The check.** Before committing, End review does four things:
+  1. It asks the remote where this branch is now (`git ls-remote --heads`) and fetches it. For a branch the remote doesn't have yet, all of the remote's branches count.
+  2. It lists every commit a push would add beyond that, ignoring replace refs.
+  3. It goes on only if each of those commits has exactly one parent and changes only your review file, compared byte for byte with git's own spelling of the path. A merge, an empty commit, or a commit that touches anything else stops it, and it says which commit.
+  4. It refuses a remote that has several addresses, or a push address that differs from the fetch address.
+
+  After committing, it checks the new commits against the same answer.
 - **What End review pushes:** exactly the commit it checked, to this branch's remote branch: `git push --no-follow-tags --no-recurse-submodules --no-signed <remote> <commit>:<remote branch>`.
   - There's no `+`, so it is never a force-push.
   - It sends no tags and no submodule commits.
   - A branch with no upstream yet goes to `origin`, or to the first remote if there's no `origin`, under its own name.
-- **If the remote moved:** when the working tree is clean, End review runs `git pull --rebase` from that remote branch, checks again, and pushes the same way. Otherwise it explains and changes nothing.
-- **No prompts:** git runs with its input closed, in its own session (no terminal on macOS and Linux), with terminal prompts, askpass and credential prompts off, and ssh in `BatchMode`. (A custom `GIT_SSH` program or plink is left as it is; on macOS and Linux it still has no terminal to prompt in.)
-- **Never:** it never force-pushes and never auto-stashes. The only commits it ever rebases are its own unpushed review commits, when combining with the remote.
+- **If the remote moved:** when the working tree is clean, End review does the check again against the remote's new position. That covers exactly the commits a rebase would replay, so only your own review commits are ever rebased. Then it rebases them onto that commit and pushes the same way. Otherwise it explains and changes nothing.
+- **A limit:** the check reflects the remote at that moment. If someone rewinds the branch in the seconds between the check and the push, the push can put back what they removed.
+- **No prompts:** git runs with its input closed, in its own session (no terminal on macOS and Linux), with terminal prompts, askpass and credential prompts off. ssh gets `BatchMode=yes` unless your own ssh command already sets BatchMode. A custom `GIT_SSH` program or plink is left as it is, with no terminal on macOS and Linux. A password manager, system keychain or ssh agent can still show its own dialog.
+- **Never:** it never force-pushes and never auto-stashes.
 - **Get latest:** `git pull --ff-only`, then rebuilds the pages.
 
 ## Commands
