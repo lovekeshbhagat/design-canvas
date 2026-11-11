@@ -115,7 +115,7 @@ Review files come from other people, and coding agents read them, so:
 - **Bodies** are JSON, at most 1 MB. The API takes no paths and no commands.
 
 **Git:**
-- **What End review commits:** `git add -- <your file>`, then `git -c commit.gpgsign=false commit --no-verify --only -- <your file>`, so other staged work is never included. `--no-verify` skips the pre-commit and commit-msg hooks; other hooks (such as post-commit and pre-push) still run, and the check below catches anything they add.
+- **What End review commits:** `git --literal-pathspecs add -- <your file>`, then `git --literal-pathspecs -c commit.gpgsign=false commit --no-verify --only -- <your file>`, so other staged work is never included. It notices a new review file even when git is set to hide untracked files; if an ignore rule matches the file, it says so and commits nothing. `--no-verify` skips the pre-commit and commit-msg hooks; other hooks (such as post-commit and pre-push) still run, and the check below catches anything they add.
 - **The check.** Before committing, End review does four things:
   1. It asks the remote where this branch is now (`git ls-remote --heads`) and fetches it. For a branch the remote doesn't have yet, all of the remote's branches count.
   2. It lists every commit a push would add beyond that, ignoring replace refs.
@@ -131,7 +131,7 @@ Review files come from other people, and coding agents read them, so:
 - **A limit:** the check reflects the remote at that moment. If someone rewinds the branch in the seconds between the check and the push, the push can put back what they removed.
 - **No prompts:** git runs with its input closed, in its own session (no terminal on macOS and Linux), with terminal prompts, askpass and credential prompts off. ssh gets `BatchMode=yes` unless your own ssh command already sets BatchMode. A custom `GIT_SSH` program or plink is left as it is, with no terminal on macOS and Linux. A password manager, system keychain or ssh agent can still show its own dialog.
 - **Never:** it never force-pushes and never auto-stashes.
-- **Get latest:** `git pull --ff-only --no-rebase --no-autostash`, then rebuilds the pages. It never rebases or stashes, whatever your pull settings say.
+- **Get latest:** `git -c rebase.autoStash=false -c merge.autoStash=false pull --ff-only --no-rebase`, then rebuilds the pages. It never rebases or stashes, whatever your pull settings say.
 
 ## Commands
 

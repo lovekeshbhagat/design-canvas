@@ -6,7 +6,7 @@ design-canvas works with any coding agent in three ways. Use whichever your tool
 2. **As an MCP server**: the agent calls `design_canvas_*` tools. This works in any MCP client, even one without a shell.
 3. **By hand**: tell any agent "Follow `/path/to/design-canvas/SKILL.md`", or run the commands yourself or in CI.
 
-**Requirements:** Python 3.9 or newer, standard library only. Everything works offline except the review helper's End review and Get latest, which push and pull with git. On Windows the command may be `python` or `py -3` instead of `python3`.
+**Requirements:** Python 3.9 or newer, standard library only, and git 2.23 or newer for the review helper. Everything works offline except the review helper's End review and Get latest, which push and pull with git. On Windows the command may be `python` or `py -3` instead of `python3`.
 
 **The folder must be named `design-canvas`.** The Agent Skills spec requires the folder name to match `name:` in SKILL.md, and some tools silently skip a skill whose folder doesn't match. A GitHub zip unpacks as `design-canvas-main`, so rename it.
 
@@ -112,7 +112,7 @@ For an agent with no skills or MCP support (Aider, a custom agent, a chat window
 
 ## For designers and other reviewers
 
-You don't need an AI tool to review. You need a copy of the repo (git), Python 3.9+, and this folder.
+You don't need an AI tool to review. You need a copy of the repo (git 2.23+), Python 3.9+, and this folder.
 
 ```bash
 python3 /ABS/engine/build.py design-canvas --serve

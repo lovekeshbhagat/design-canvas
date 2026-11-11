@@ -124,7 +124,9 @@ class Helper:
                 st["ahead"], st["behind"] = int(lr[0]), int(lr[1])
         rel = self.my_rel()
         st["file"] = rel
-        st["unsent"] = bool(rel and self.git("status", "--porcelain", "--", rel).stdout.strip())
+        # untracked and ignored files always show here, whatever status.showUntrackedFiles or ignore rules say
+        st["unsent"] = bool(rel and self.git("--literal-pathspecs", "status", "--porcelain", "--untracked-files=all",
+                                             "--ignored=matching", "--", rel).stdout.strip())
         gd = self.git("rev-parse", "--git-dir").stdout.strip()
         gdir = (self.repo / gd) if gd and not os.path.isabs(gd) else Path(gd or ".")
         st["busy"] = any((gdir / x).exists() for x in ("rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD"))
@@ -269,6 +271,10 @@ class Helper:
                 cm = self.git("--literal-pathspecs", "-c", "commit.gpgsign=false", "commit", "--no-verify", "--only", "-m", msg,
                               "--", rel) if add.returncode == 0 else add
                 if cm.returncode != 0:
+                    if "ignored" in (cm.stderr or cm.stdout).lower():
+                        return {"ok": False, "message": "Your review file is ignored by git (a .gitignore or info/exclude rule "
+                                "matches it), so it can't be committed. Remove that rule, or use Download review file.",
+                                "git": self.git_state()}
                     return {"ok": False, "message": "Couldn't commit your review file: " + _say(cm.stderr or cm.stdout), "git": self.git_state()}
                 committed = True
             elif st["upstream"] and st["ahead"] == 0:
@@ -323,7 +329,8 @@ class Helper:
             if problem:
                 return {"ok": False, "message": problem, "git": st}
             before = self.git("rev-parse", "HEAD").stdout.strip()
-            pull = self.git("pull", "--ff-only", "--no-rebase", "--no-autostash", timeout=120)
+            pull = self.git("-c", "rebase.autoStash=false", "-c", "merge.autoStash=false", "pull", "--ff-only", "--no-rebase",
+                            timeout=120)
             if pull.returncode != 0:
                 err = (pull.stderr or pull.stdout).lower()
                 if "would be overwritten" in err or "your local changes" in err:

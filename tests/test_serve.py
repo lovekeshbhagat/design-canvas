@@ -418,6 +418,22 @@ class Helper(unittest.TestCase):
                 self.assertEqual(git(me, "stash", "list"), "", "nothing was stashed")
                 self.assertIn("// my unsaved edit", theme.read_text(encoding="utf-8"))
 
+    def test_a_new_review_is_sent_when_git_hides_untracked_files(self):
+        git(self.sam, "config", "status.showUntrackedFiles", "no")
+        h = self.start(self.sam)
+        self.api(h, "save", {"comments": [self.comment(h)], "updates": []})
+        r = self.api(h, "end-review", {})[1]
+        self.assertTrue(r["ok"], r)
+        self.assertNotIn("already pushed", r["message"])
+        self.assertEqual(git(self.tmp / "remote.git", "show", "--name-only", "--format=", "main").splitlines(),
+                         [f"design-canvas/reviews/{h.me['slug']}.json"])
+
+    def test_an_ignored_review_file_is_reported_not_called_sent(self):
+        (self.sam / ".git" / "info").mkdir(exist_ok=True)
+        (self.sam / ".git" / "info" / "exclude").write_text("*.json\n", encoding="utf-8")
+        r = self.refused(self.start(self.sam), "ignored by git")
+        self.assertNotIn("already pushed", r["message"])
+
     def test_ssh_always_runs_in_batch_mode(self):
         git(self.sam, "config", "core.sshCommand", "ssh -i ~/.ssh/other_key")
         self.assertEqual(self.start(self.sam).ssh, "ssh -i ~/.ssh/other_key -o BatchMode=yes")
