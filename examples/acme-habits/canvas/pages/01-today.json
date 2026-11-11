@@ -1,0 +1,11 @@
+{
+  "id": "today",
+  "order": 1,
+  "title": "Today",
+  "blurb": "The home tab: today's habits, ticking them off, and adding a new one.",
+  "rows": [
+    { "title": "Check off habits", "flow": true, "frames": ["today", "today-done"] },
+    { "title": "Add a habit", "note": "Opened from the + button", "frames": ["add-habit"] }
+  ],
+  "links": [["today", "add-habit", "+ New"]]
+}

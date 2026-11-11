@@ -1,0 +1,29 @@
+/* Acme Habits component styles, written from app/src/components/*.
+   Used by the guide's specimens and by the canvas screens. Prefix: p- */
+.p-btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--s-sm); height: 48px; padding: 0 var(--s-xl); border: 0; border-radius: var(--r-pill); background: var(--c-primary); color: var(--c-on-primary); font: var(--t-label); font-weight: 600; letter-spacing: var(--ls-label); }
+.p-btn.block { display: flex; width: 100%; }
+.p-btn.secondary { background: var(--c-surface-raised); color: var(--c-text); }
+.p-btn.ghost { background: none; color: var(--c-primary); padding: 0 var(--s-md); }
+.p-btn.sm { height: 36px; padding: 0 var(--s-lg); }
+.p-btn[disabled] { opacity: 0.4; }
+.p-chip { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px; border-radius: var(--r-pill); border: 1px solid var(--c-border); color: var(--c-text); font: var(--t-label); background: none; }
+.p-chip .ic { width: 16px; height: 16px; }
+.p-chip.on { background: var(--c-primary); border-color: var(--c-primary); color: var(--c-on-primary); }
+.p-check { width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--c-border); display: grid; place-items: center; flex: none; box-sizing: border-box; color: var(--c-on-primary); }
+.p-check .ic { width: 16px; height: 16px; stroke-width: 3; }
+.p-check.on { background: var(--c-success); border-color: var(--c-success); }
+.p-habit { display: flex; align-items: center; gap: var(--s-md); padding: var(--s-md) var(--s-lg); background: var(--c-surface); border-radius: var(--r-card); }
+.p-habit .meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.p-habit .name { font: var(--t-label); font-weight: 600; color: var(--c-text); }
+.p-habit .sub { font: var(--t-caption); color: var(--c-text-muted); display: flex; align-items: center; gap: 4px; }
+.p-habit .sub .ic { width: 14px; height: 14px; color: var(--c-danger); }
+.p-habit.done .name { color: var(--c-text-muted); text-decoration: line-through; }
+.p-card { background: var(--c-surface); border-radius: var(--r-card); padding: var(--s-lg); box-shadow: var(--sh-card); display: flex; flex-direction: column; gap: var(--s-sm); }
+.p-progress { height: 8px; border-radius: var(--r-pill); background: var(--c-surface-raised); overflow: hidden; }
+.p-progress > i { display: block; height: 100%; border-radius: inherit; background: var(--c-primary); }
+.p-input { height: 48px; border-radius: var(--r-md); background: var(--c-surface-raised); color: var(--c-text); font: var(--t-body); padding: 0 var(--s-lg); display: flex; align-items: center; }
+.p-input.placeholder { color: var(--c-text-muted); }
+.p-tabbar { flex: none; display: grid; grid-template-columns: repeat(3, 1fr); padding: 8px 0 34px; border-top: 1px solid var(--c-border); background: var(--c-bg); }
+.p-tabbar span { display: flex; flex-direction: column; align-items: center; gap: 4px; font: 500 11px/13px var(--f-medium); color: var(--c-text-muted); }
+.p-tabbar .ic { width: 24px; height: 24px; }
+.p-tabbar[data-active="today"] [data-tab="today"], .p-tabbar[data-active="stats"] [data-tab="stats"], .p-tabbar[data-active="profile"] [data-tab="profile"] { color: var(--c-primary); }

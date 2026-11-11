@@ -1,0 +1,19 @@
+# secrets and machine files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p8
+*.p12
+.DS_Store
+__pycache__/
+*.pyc
+node_modules/
+.venv/
+# build output of local runs
+examples/*/out/
+.cache/
+
+# local tooling
+.claude/

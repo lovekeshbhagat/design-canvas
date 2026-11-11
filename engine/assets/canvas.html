@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en" data-theme="{{DEFAULT_THEME}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<meta name="description" content="Every screen of {{APP}} on one pan-and-zoom board, drawn from the screen code.">
+<meta name="generator" content="design-canvas">
+{{FONT_LINKS}}
+<style>
+{{FONT_FACES}}
+/* App tokens, generated from design.json */
+{{CSS_VARS}}
+{{CSS}}
+</style>
+</head>
+<body>
+{{SPRITE}}
+<div class="app" id="app">
+  <aside class="side" aria-label="Pages and screens">
+    <div class="side-top">
+      <div class="brand"><span class="mark" aria-hidden="true">{{INITIAL}}</span><span>{{APP}}<small>Canvas · {{N_FRAMES}} screens</small></span><button class="side-close" id="side-close" type="button">Close</button></div>
+      <a class="to-guide" href="guide.html">Design guide →</a>
+    </div>
+    <div class="side-label">Pages</div>
+    <nav class="pages" id="pages">{{PAGES_NAV}}</nav>
+    <div class="side-label">Screens on this page</div>
+    <label class="find" for="find"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="find" type="search" placeholder="Find a screen" autocomplete="off"></label>
+    <div class="frames" id="frames"></div>
+    <div class="side-foot">Drag to move · pinch or <kbd>⌘</kbd>/<kbd>Ctrl</kbd> + scroll to zoom · <kbd>0</kbd> fit · <kbd>1</kbd> 100% · <kbd>[</kbd> <kbd>]</kbd> pages<br>Built {{BUILT}} with design-canvas</div>
+  </aside>
+  <div class="mbar" id="mbar"><button class="menu" id="menu" type="button">Screens</button><div class="chips" id="chips">{{PAGES_CHIPS}}</div></div>
+  <main class="board" id="board" aria-label="Canvas">
+    <div class="world" id="world">{{PAGES}}</div>
+    <div class="hint" id="hint">Click a screen to zoom to it</div>
+    <div class="dc-tools dc-ui" role="toolbar" aria-label="Review">
+      <button type="button" id="dc-inspect" aria-pressed="false" title="Inspect elements (I)">Inspect</button>
+      <button type="button" id="dc-comments" title="Comments (C)">Comments <b id="dc-count">0</b></button>
+    </div>
+    <aside class="dc-drawer dc-ui" id="dc-drawer" aria-label="Inspect and comments" hidden></aside>
+    <div class="zoom" role="group" aria-label="Zoom">
+      <button type="button" id="zout" aria-label="Zoom out">−</button>
+      <button type="button" class="pct" id="zpct" aria-label="Reset to 100%">100%</button>
+      <button type="button" id="zin" aria-label="Zoom in">+</button>
+      <button type="button" id="zfit">Fit</button>
+    </div>
+  </main>
+</div>
+<script>
+window.CANVAS = {{DATA}};
+window.DC = {{DC}};
+{{JS}}
+</script>
+</body>
+</html>

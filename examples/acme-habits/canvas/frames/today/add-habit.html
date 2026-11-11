@@ -1,0 +1,17 @@
+<!--
+title: Add a habit
+state: Sheet open
+source: src/screens/AddHabitSheet.tsx
+-->
+<div class="sc-under">
+  <div class="sc-body sc-pad"><div class="today-head" data-dc="header"><div><h1>Today</h1><p>Tuesday, 11 November</p></div><span class="today-add" data-dc="add-button">{{icon:plus}}</span></div></div>
+  {{> tabbar active=today}}
+</div>
+<div class="sc-scrim"></div>
+<div class="sc-sheet today-sheet" style="box-shadow:var(--sh-sheet)">
+  <div class="sc-handle"></div>
+  <h2>New habit</h2>
+  <div class="p-input placeholder" data-dc="name-field">What do you want to do?</div>
+  <div class="chips"><span class="p-chip on">{{icon:check}} Daily</span><span class="p-chip">Weekdays</span><span class="p-chip">3× a week</span></div>
+  <button class="p-btn block" data-dc="submit">Add habit</button>
+</div>

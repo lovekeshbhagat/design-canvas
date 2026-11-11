@@ -1,0 +1,54 @@
+/* ==========================================================================
+   Device frames and screen helpers. A frame file supplies only what goes
+   inside .sc; the engine adds the device chrome. Everything here is coloured
+   through the --role-* variables, so it follows the app's theme.
+   ========================================================================== */
+.dev { background: var(--role-bg); color: var(--role-text); font: var(--t-default); text-align: left; position: relative; overflow: hidden; display: flex; flex-direction: column; box-sizing: border-box; }
+.dev .ic { width: 20px; height: 20px; flex: none; }
+.dev.tall { height: auto !important; }
+.dev > .sc { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
+
+/* phone: 47 pt status bar, island, home indicator */
+.dev-phone { border-radius: 54px; box-shadow: 0 0 0 9px #141414, 0 0 0 10px #2c2c2c, 0 40px 90px rgba(0, 0, 0, 0.55); }
+.dev-sb { height: 47px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 8px 30px 0 36px; font: 600 16px/1 -apple-system, 'SF Pro Text', system-ui, sans-serif; letter-spacing: -0.2px; position: relative; z-index: 30; }
+.dev-sb svg { height: 12px; fill: currentColor; }
+.dev-sb .r { display: flex; gap: 6px; align-items: center; }
+.dev-island { position: absolute; top: 11px; left: 50%; width: 124px; height: 35px; margin-left: -62px; border-radius: 20px; background: #000; z-index: 31; }
+.dev-home { position: absolute; bottom: 8px; left: 50%; width: 134px; height: 5px; margin-left: -67px; border-radius: 3px; background: currentColor; opacity: 0.85; z-index: 40; }
+
+/* browser: a plain window bar */
+.dev-browser { border-radius: 12px; box-shadow: 0 0 0 1px rgba(127, 127, 127, 0.35), 0 30px 80px rgba(0, 0, 0, 0.45); }
+.dev-bar { height: 40px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 14px; background: var(--role-surface); border-bottom: 1px solid var(--role-border); }
+.dev-bar i { width: 12px; height: 12px; border-radius: 50%; background: var(--role-border); }
+.dev-bar span { margin-left: 12px; flex: 1; max-width: 520px; height: 26px; border-radius: 8px; background: var(--role-bg); font: 400 13px/26px system-ui, sans-serif; color: var(--role-muted); padding: 0 12px; overflow: hidden; white-space: nowrap; }
+.dev-none { border-radius: 4px; box-shadow: 0 0 0 1px rgba(127, 127, 127, 0.35); }
+
+/* layout helpers for screen authors */
+.sc-body { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.dev.tall .sc-body { overflow: visible; }
+.sc-pad { padding-left: var(--gutter); padding-right: var(--gutter); }
+.sc-safe { padding-bottom: 34px; }
+.sc-row { display: flex; align-items: center; }
+.sc-col { display: flex; flex-direction: column; }
+.sc-grow { flex: 1; min-width: 0; }
+.sc-hr { height: 1px; background: var(--role-border); flex: none; }
+.sc-trunc { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sc-center { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.sc-spinner { width: 20px; height: 20px; border-radius: 50%; border: 2.5px solid var(--role-border); border-top-color: var(--role-muted); flex: none; }
+.sc-spinner.lg { width: 36px; height: 36px; border-width: 3px; }
+
+/* overlays: dim the screen under a sheet or dialog */
+.sc-under { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.sc-scrim { position: absolute; inset: 0; background: var(--role-scrim); z-index: 20; }
+.sc-sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 21; background: var(--role-surface); border-radius: 20px 20px 0 0; padding: 12px var(--gutter) 34px; display: flex; flex-direction: column; }
+.sc-handle { width: 40px; height: 4px; border-radius: 99px; background: var(--role-border); align-self: center; margin-bottom: 16px; flex: none; }
+.sc-dialog-wrap { position: absolute; inset: 0; z-index: 21; display: flex; align-items: center; justify-content: center; padding: 0 24px; }
+.sc-modal { position: absolute; inset: 0; background: color-mix(in srgb, var(--role-text) 12%, var(--role-bg)); display: flex; flex-direction: column; }
+.sc-modal::before { content: ""; height: 10px; margin: 0 16px; border-radius: 12px 12px 0 0; background: color-mix(in srgb, var(--role-text) 6%, var(--role-bg)); flex: none; }
+.sc-modal > .sc-modal-card { flex: 1; min-height: 0; background: var(--role-bg); border-radius: 12px 12px 0 0; display: flex; flex-direction: column; overflow: hidden; }
+
+/* placeholder imagery: abstract stand-ins, never real photos or people */
+.ph-photo { background: radial-gradient(ellipse at 50% 36%, color-mix(in srgb, var(--role-text) 28%, var(--role-surface)) 0 15%, transparent 15.5%), radial-gradient(ellipse at 50% 86%, color-mix(in srgb, var(--role-text) 18%, var(--role-surface)) 0 38%, transparent 38.5%), linear-gradient(170deg, var(--role-surface-2), var(--role-surface)); }
+.ph-image { background: linear-gradient(135deg, color-mix(in srgb, var(--role-accent) 35%, var(--role-surface)), var(--role-surface-2)); }
+.ph-thumb { background: var(--role-surface-2); }
+.ph-avatar { border-radius: 50%; background: color-mix(in srgb, var(--role-accent) 30%, var(--role-surface-2)); }

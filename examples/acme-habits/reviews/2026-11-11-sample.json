@@ -1,0 +1,44 @@
+{
+  "format": "design-canvas-review",
+  "schemaVersion": 1,
+  "app": "Acme Habits",
+  "exported": "2026-11-11T09:30:00Z",
+  "author": "Sam",
+  "comments": [
+    {
+      "id": "sam-k2p9x4",
+      "replyTo": null,
+      "screen": "today",
+      "built": "2026-11-11T09:00:00Z",
+      "anchor": {
+        "dc": "habit-4",
+        "path": "div:nth-of-type(1)>span:nth-of-type(1)",
+        "component": "p-habit",
+        "text": "Read 10 pages",
+        "box": { "x": 92, "y": 548, "w": 120, "h": 18 }
+      },
+      "tokens": { "color": "colors.text", "font": "type.label" },
+      "body": "The habit name is the main thing in the row. Can it be a little bolder than the streak line under it?",
+      "author": "Sam",
+      "status": "open",
+      "created": "2026-11-11T09:12:00Z",
+      "modified": "2026-11-11T09:12:00Z",
+      "resolvedAt": null
+    },
+    {
+      "id": "sam-w7q3m1",
+      "replyTo": null,
+      "screen": "stats",
+      "built": "2026-11-11T09:00:00Z",
+      "anchor": { "dc": "week-chart", "component": "p-card", "box": { "x": 36, "y": 150, "w": 318, "h": 160 } },
+      "tokens": {},
+      "body": "Weekend bars read like empty states. Give them a light fill so they still look like data.",
+      "author": "Sam",
+      "status": "resolved",
+      "created": "2026-11-11T09:20:00Z",
+      "modified": "2026-11-11T09:40:00Z",
+      "resolvedAt": "2026-11-11T09:40:00Z",
+      "resolution": "Low days use colors.surfaceRaised instead of no fill (StatsScreen.tsx)."
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en" data-theme="{{DEFAULT_THEME}}" data-scheme="{{DEFAULT_SCHEME}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<meta name="description" content="{{DESCRIPTION}}">
+<meta name="generator" content="design-canvas">
+{{FONT_LINKS}}
+<style>
+{{FONT_FACES}}
+/* App tokens, generated from design.json */
+{{CSS_VARS}}
+{{CSS}}
+</style>
+</head>
+<body>
+{{SPRITE}}
+<div class="shell">
+  <nav class="rail" aria-label="Guide sections">
+    <a class="brand" href="#top"><span class="mark" aria-hidden="true">{{INITIAL}}</span><span>{{APP}}<small>Design guide</small></span></a>
+    {{THEMES}}
+    <label class="find" for="find"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="find" type="search" placeholder="Find a part" autocomplete="off"></label>
+    {{NAV}}
+    <p class="built">Built {{BUILT}} with design-canvas</p>
+  </nav>
+  <main class="main">
+    <header class="hero" id="top">
+      <p class="eyebrow">{{PLATFORM}} design system</p>
+      <h1 class="hero-title">{{APP}}</h1>
+      <p class="lede">{{LEDE}}</p>
+      <ol class="ladder" style="--n: {{LADDER_N}}" aria-label="What is in this guide">{{LADDER}}</ol>
+    </header>
+    {{SECTIONS}}
+    <footer class="foot">
+      <p>Generated on {{BUILT}} from <code>design.json</code>, which is read from the app's code. Tokens are also exported as <a href="tokens.json">tokens.json</a> (Design Tokens, DTCG format) and <a href="tokens.md">tokens.md</a>.</p>
+    </footer>
+  </main>
+</div>
+<script>
+window.DG_SCHEMES = {{SCHEMES}};
+{{JS}}
+</script>
+</body>
+</html>

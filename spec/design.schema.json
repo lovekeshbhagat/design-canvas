@@ -1,0 +1,230 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "design.schema.json",
+  "title": "design.json",
+  "description": "One app's design system in a standard shape, written by an agent from the app's code. See DESIGN_JSON.md.",
+  "type": "object",
+  "required": ["version", "app", "roles", "colors"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "const": 1 },
+    "app": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "platform": { "enum": ["react-native", "ios", "android", "flutter", "web", "other"] },
+        "root": { "type": "string", "description": "App repo root, relative to the folder holding design.json. Default '..'." },
+        "frame": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "device": { "enum": ["phone", "browser", "none"] },
+            "width": { "type": "number", "minimum": 100 },
+            "height": { "type": "number", "minimum": 100 }
+          }
+        }
+      }
+    },
+    "themes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+          "label": { "type": "string" },
+          "scheme": { "enum": ["light", "dark"] }
+        }
+      }
+    },
+    "roles": {
+      "type": "object",
+      "required": ["background", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "background": { "type": "string" },
+        "surface": { "type": "string" },
+        "surface2": { "type": "string" },
+        "text": { "type": "string" },
+        "textMuted": { "type": "string" },
+        "accent": { "type": "string" },
+        "onAccent": { "type": "string" },
+        "border": { "type": "string" },
+        "danger": { "type": "string" },
+        "scrim": { "type": "string" }
+      }
+    },
+    "colors": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "oneOf": [
+          { "$ref": "#/$defs/colorValue" },
+          {
+            "allOf": [
+              { "$ref": "#/$defs/meta" },
+              { "type": "object", "required": ["value"], "properties": { "value": { "$ref": "#/$defs/colorValue" } } }
+            ]
+          }
+        ]
+      }
+    },
+    "fonts": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["family"],
+        "properties": {
+          "family": { "type": "string" },
+          "weight": { "type": "integer", "minimum": 100, "maximum": 1000 },
+          "style": { "enum": ["normal", "italic"] },
+          "load": { "enum": ["google", "url", "system"] },
+          "url": { "type": "string" },
+          "code": { "type": "string" },
+          "doc": { "type": "string" },
+          "src": { "type": "string" }
+        }
+      }
+    },
+    "type": {
+      "type": "object",
+      "additionalProperties": {
+        "allOf": [
+          { "$ref": "#/$defs/meta" },
+          {
+            "type": "object",
+            "required": ["font", "size"],
+            "properties": {
+              "font": { "type": "string", "description": "A key in fonts." },
+              "size": { "type": "number" },
+              "lineHeight": { "type": "number", "description": "px" },
+              "lineHeightRatio": { "type": "number" },
+              "letterSpacing": { "type": "number", "description": "px" },
+              "textTransform": { "enum": ["none", "uppercase", "lowercase", "capitalize"] },
+              "sample": { "type": "string" }
+            }
+          }
+        ]
+      }
+    },
+    "spacing": { "$ref": "#/$defs/numberTokens" },
+    "radii": { "$ref": "#/$defs/numberTokens" },
+    "shadows": {
+      "type": "object",
+      "additionalProperties": {
+        "allOf": [
+          { "$ref": "#/$defs/meta" },
+          {
+            "type": "object",
+            "properties": {
+              "x": { "type": "number" },
+              "y": { "type": "number" },
+              "blur": { "type": "number" },
+              "spread": { "type": "number" },
+              "color": { "type": "string" },
+              "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+              "elevation": { "type": "number" }
+            }
+          }
+        ]
+      }
+    },
+    "motion": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "durations": { "$ref": "#/$defs/numberTokens" },
+        "easings": {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              { "type": "string" },
+              { "allOf": [{ "$ref": "#/$defs/meta" }, { "type": "object", "required": ["value"], "properties": { "value": { "type": "string" } } }] }
+            ]
+          }
+        },
+        "springs": {
+          "type": "object",
+          "additionalProperties": {
+            "allOf": [
+              { "$ref": "#/$defs/meta" },
+              {
+                "type": "object",
+                "properties": { "damping": { "type": "number" }, "stiffness": { "type": "number" }, "mass": { "type": "number" } }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "icons": {
+      "type": "object",
+      "required": ["items"],
+      "additionalProperties": false,
+      "properties": {
+        "set": { "type": "string" },
+        "style": { "enum": ["stroke", "fill"] },
+        "strokeWidth": { "type": "number" },
+        "viewBox": { "type": "string" },
+        "items": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["svg"],
+            "additionalProperties": false,
+            "properties": {
+              "svg": { "type": "string" },
+              "source": { "type": "string" },
+              "style": { "enum": ["stroke", "fill"] },
+              "strokeWidth": { "type": "number" },
+              "viewBox": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "components": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "importFrom": { "type": "array", "items": { "type": "string" } },
+        "scan": { "type": "array", "items": { "type": "string" } },
+        "ignore": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  },
+  "$defs": {
+    "hexOrRgba": { "type": "string", "pattern": "^(#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})|rgba?\\(.*\\)|transparent)$" },
+    "colorValue": {
+      "oneOf": [
+        { "$ref": "#/$defs/hexOrRgba" },
+        { "type": "object", "minProperties": 1, "additionalProperties": { "$ref": "#/$defs/hexOrRgba" }, "description": "One value per theme id." }
+      ]
+    },
+    "meta": {
+      "type": "object",
+      "properties": {
+        "doc": { "type": "string" },
+        "group": { "type": "string" },
+        "code": { "type": "string" },
+        "src": { "type": "string", "description": "path/from/app/root:line" },
+        "derived": { "type": "string", "description": "How the value is computed, when it is not written literally in the code." }
+      }
+    },
+    "numberTokens": {
+      "type": "object",
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "number" },
+          { "allOf": [{ "$ref": "#/$defs/meta" }, { "type": "object", "required": ["value"], "properties": { "value": { "type": "number" } } }] }
+        ]
+      }
+    }
+  }
+}

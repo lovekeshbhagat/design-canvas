@@ -1,0 +1,7 @@
+{
+  "id": "stats",
+  "order": 2,
+  "title": "Stats",
+  "blurb": "How the week went, per habit.",
+  "rows": [{ "title": "This week", "frames": ["stats", "stats-dark"] }]
+}

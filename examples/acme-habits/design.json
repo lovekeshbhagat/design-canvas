@@ -1,0 +1,403 @@
+{
+  "$schema": "../../spec/design.schema.json",
+  "version": 1,
+  "app": {
+    "name": "Acme Habits",
+    "description": "A small habit tracker, made up to test design-canvas. Its \"code\" is the tiny app/ folder next to this file.",
+    "platform": "react-native",
+    "root": "app",
+    "frame": {
+      "device": "phone",
+      "width": 390,
+      "height": 844
+    }
+  },
+  "themes": [
+    {
+      "id": "light",
+      "label": "Light",
+      "scheme": "light"
+    },
+    {
+      "id": "dark",
+      "label": "Dark",
+      "scheme": "dark"
+    }
+  ],
+  "roles": {
+    "background": "bg",
+    "surface": "surface",
+    "surface2": "surfaceRaised",
+    "text": "text",
+    "textMuted": "textMuted",
+    "accent": "primary",
+    "onAccent": "onPrimary",
+    "border": "border",
+    "danger": "danger",
+    "scrim": "scrim"
+  },
+  "colors": {
+    "bg": {
+      "value": {
+        "light": "#FFFFFF",
+        "dark": "#0E0F12"
+      },
+      "group": "Background",
+      "doc": "Screen background",
+      "code": "theme.bg",
+      "src": "src/theme.ts:6, src/theme.ts:20"
+    },
+    "surface": {
+      "value": {
+        "light": "#F5F6F8",
+        "dark": "#17191D"
+      },
+      "group": "Background",
+      "doc": "Cards and sheets",
+      "code": "theme.surface",
+      "src": "src/theme.ts:7, src/theme.ts:21"
+    },
+    "surfaceRaised": {
+      "value": {
+        "light": "#ECEEF2",
+        "dark": "#22252B"
+      },
+      "group": "Background",
+      "doc": "Pressed rows and inputs",
+      "code": "theme.surfaceRaised",
+      "src": "src/theme.ts:8, src/theme.ts:22"
+    },
+    "text": {
+      "value": {
+        "light": "#111318",
+        "dark": "#F2F3F5"
+      },
+      "group": "Text",
+      "doc": "Main text",
+      "code": "theme.text",
+      "src": "src/theme.ts:9, src/theme.ts:23"
+    },
+    "textMuted": {
+      "value": {
+        "light": "#5F6672",
+        "dark": "#9AA0AA"
+      },
+      "group": "Text",
+      "doc": "Secondary text, captions",
+      "code": "theme.textMuted",
+      "src": "src/theme.ts:10, src/theme.ts:24"
+    },
+    "primary": {
+      "value": {
+        "light": "#3B5BFD",
+        "dark": "#6F86FF"
+      },
+      "group": "Brand",
+      "doc": "Buttons, progress, focus rings",
+      "code": "theme.primary",
+      "src": "src/theme.ts:11, src/theme.ts:25"
+    },
+    "onPrimary": {
+      "value": {
+        "light": "#FFFFFF",
+        "dark": "#0E0F12"
+      },
+      "group": "Brand",
+      "doc": "Text and icons on primary",
+      "code": "theme.onPrimary",
+      "src": "src/theme.ts:12, src/theme.ts:26"
+    },
+    "success": {
+      "value": {
+        "light": "#1F9D55",
+        "dark": "#3CCB7F"
+      },
+      "group": "Status",
+      "doc": "Done state, streaks",
+      "code": "theme.success",
+      "src": "src/theme.ts:13, src/theme.ts:27"
+    },
+    "danger": {
+      "value": {
+        "light": "#D93025",
+        "dark": "#FF6B5E"
+      },
+      "group": "Status",
+      "doc": "Errors and destructive actions",
+      "code": "theme.danger",
+      "src": "src/theme.ts:14, src/theme.ts:28"
+    },
+    "border": {
+      "value": {
+        "light": "#E3E6EB",
+        "dark": "#2B2E35"
+      },
+      "group": "Lines",
+      "doc": "Hairlines and outlines",
+      "code": "theme.border",
+      "src": "src/theme.ts:15, src/theme.ts:29"
+    },
+    "scrim": {
+      "value": "rgba(0, 0, 0, 0.45)",
+      "group": "Lines",
+      "doc": "Dims the screen under sheets",
+      "code": "theme.scrim",
+      "src": "src/theme.ts:16, src/theme.ts:30"
+    }
+  },
+  "fonts": {
+    "regular": {
+      "family": "Inter",
+      "weight": 400,
+      "load": "google",
+      "code": "fontFamily.regular",
+      "src": "src/theme.ts:34"
+    },
+    "medium": {
+      "family": "Inter",
+      "weight": 500,
+      "load": "google",
+      "code": "fontFamily.medium",
+      "src": "src/theme.ts:35"
+    },
+    "semibold": {
+      "family": "Inter",
+      "weight": 600,
+      "load": "google",
+      "code": "fontFamily.semibold",
+      "src": "src/theme.ts:36"
+    },
+    "bold": {
+      "family": "Inter",
+      "weight": 700,
+      "load": "google",
+      "code": "fontFamily.bold",
+      "src": "src/theme.ts:37"
+    }
+  },
+  "type": {
+    "display": {
+      "font": "bold",
+      "size": 32,
+      "lineHeight": 38,
+      "doc": "Big numbers and empty states",
+      "code": "type.display",
+      "src": "src/theme.ts:41",
+      "letterSpacing": -0.5
+    },
+    "title": {
+      "font": "semibold",
+      "size": 22,
+      "lineHeight": 28,
+      "doc": "Screen titles",
+      "code": "type.title",
+      "src": "src/theme.ts:42",
+      "letterSpacing": -0.2
+    },
+    "heading": {
+      "font": "semibold",
+      "size": 17,
+      "lineHeight": 22,
+      "doc": "Section and card headings",
+      "code": "type.heading",
+      "src": "src/theme.ts:43"
+    },
+    "body": {
+      "font": "regular",
+      "size": 16,
+      "lineHeight": 22,
+      "doc": "Running text",
+      "code": "type.body",
+      "src": "src/theme.ts:44"
+    },
+    "label": {
+      "font": "medium",
+      "size": 14,
+      "lineHeight": 18,
+      "doc": "Buttons, chips, row titles",
+      "code": "type.label",
+      "src": "src/theme.ts:45"
+    },
+    "caption": {
+      "font": "regular",
+      "size": 12,
+      "lineHeight": 16,
+      "doc": "Dates, counts, hints",
+      "code": "type.caption",
+      "src": "src/theme.ts:46"
+    }
+  },
+  "spacing": {
+    "xs": {
+      "value": 4,
+      "src": "src/theme.ts:49",
+      "code": "space.xs"
+    },
+    "sm": {
+      "value": 8,
+      "src": "src/theme.ts:49",
+      "code": "space.sm"
+    },
+    "md": {
+      "value": 12,
+      "src": "src/theme.ts:49",
+      "code": "space.md"
+    },
+    "lg": {
+      "value": 16,
+      "src": "src/theme.ts:49",
+      "code": "space.lg"
+    },
+    "xl": {
+      "value": 24,
+      "src": "src/theme.ts:49",
+      "code": "space.xl"
+    },
+    "xxl": {
+      "value": 32,
+      "src": "src/theme.ts:49",
+      "code": "space.xxl"
+    },
+    "gutter": {
+      "value": 20,
+      "src": "src/theme.ts:49",
+      "code": "space.gutter",
+      "doc": "Screen side padding"
+    }
+  },
+  "radii": {
+    "sm": {
+      "value": 6,
+      "src": "src/theme.ts:51",
+      "code": "radius.sm"
+    },
+    "md": {
+      "value": 10,
+      "src": "src/theme.ts:51",
+      "code": "radius.md"
+    },
+    "card": {
+      "value": 16,
+      "src": "src/theme.ts:51",
+      "code": "radius.card",
+      "doc": "Cards and sheets"
+    },
+    "pill": {
+      "value": 999,
+      "src": "src/theme.ts:51",
+      "code": "radius.pill",
+      "doc": "Chips and round buttons"
+    }
+  },
+  "shadows": {
+    "card": {
+      "x": 0,
+      "y": 2,
+      "blur": 8,
+      "spread": 0,
+      "color": "#000000",
+      "opacity": 0.08,
+      "elevation": 2,
+      "doc": "Resting cards",
+      "code": "shadow.card",
+      "src": "src/theme.ts:54"
+    },
+    "sheet": {
+      "x": 0,
+      "y": -4,
+      "blur": 24,
+      "spread": 0,
+      "color": "#000000",
+      "opacity": 0.16,
+      "elevation": 8,
+      "doc": "Bottom sheets",
+      "code": "shadow.sheet",
+      "src": "src/theme.ts:55"
+    }
+  },
+  "motion": {
+    "durations": {
+      "fast": {
+        "value": 150,
+        "src": "src/theme.ts:59",
+        "code": "motion.duration.fast",
+        "doc": "Taps and toggles"
+      },
+      "base": {
+        "value": 220,
+        "src": "src/theme.ts:59",
+        "code": "motion.duration.base",
+        "doc": "Most transitions"
+      },
+      "slow": {
+        "value": 320,
+        "src": "src/theme.ts:59",
+        "code": "motion.duration.slow",
+        "doc": "Sheets and page changes"
+      }
+    },
+    "easings": {
+      "standard": {
+        "value": "cubic-bezier(0.2, 0, 0, 1)",
+        "doc": "Default ease for moves and fades",
+        "derived": "not in the code; the app uses springs and the platform default ease"
+      }
+    },
+    "springs": {
+      "gentle": {
+        "damping": 18,
+        "stiffness": 180,
+        "mass": 1,
+        "doc": "Sheets and cards",
+        "code": "motion.spring.gentle",
+        "src": "src/theme.ts:60"
+      }
+    }
+  },
+  "icons": {
+    "set": "custom (sample)",
+    "style": "stroke",
+    "strokeWidth": 2,
+    "viewBox": "0 0 24 24",
+    "items": {
+      "home": {
+        "svg": "<path d=\"M3 11 12 4l9 7\"/><path d=\"M5 10v10h14V10\"/><path d=\"M10 20v-6h4v6\"/>"
+      },
+      "check": {
+        "svg": "<path d=\"m5 12 5 5 9-10\"/>"
+      },
+      "plus": {
+        "svg": "<path d=\"M12 5v14M5 12h14\"/>"
+      },
+      "close": {
+        "svg": "<path d=\"M6 6l12 12M18 6 6 18\"/>"
+      },
+      "flame": {
+        "svg": "<path d=\"M12 21c-4 0-7-2.7-7-6.5 0-3 2-5 3.5-6.5.3 2 1.3 3 2.5 3.5C11 8 12 5 15 3c-.5 3 1 4.5 2.5 6.5 1 1.4 1.5 3 1.5 5 0 3.8-3 6.5-7 6.5Z\"/>"
+      },
+      "calendar": {
+        "svg": "<rect x=\"4\" y=\"5\" width=\"16\" height=\"15\" rx=\"2\"/><path d=\"M4 10h16M9 3v4M15 3v4\"/>"
+      },
+      "chart": {
+        "svg": "<path d=\"M5 20V10M12 20V4M19 20v-7\"/>"
+      },
+      "user": {
+        "svg": "<circle cx=\"12\" cy=\"8\" r=\"4\"/><path d=\"M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6\"/>"
+      },
+      "chevronRight": {
+        "svg": "<path d=\"m9 6 6 6-6 6\"/>"
+      },
+      "bell": {
+        "svg": "<path d=\"M6 16V11a6 6 0 1 1 12 0v5l2 2H4l2-2Z\"/><path d=\"M10 21h4\"/>"
+      }
+    }
+  },
+  "components": {
+    "importFrom": [
+      "src/components"
+    ],
+    "scan": [
+      "src"
+    ]
+  }
+}

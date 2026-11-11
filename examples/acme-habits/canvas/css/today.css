@@ -1,0 +1,15 @@
+.today-head { padding-top: var(--s-lg); padding-bottom: var(--s-lg); display: flex; align-items: flex-end; justify-content: space-between; }
+.today-head h1 { margin: 0; font: var(--t-title); letter-spacing: var(--ls-title); color: var(--c-text); }
+.today-head p { margin: 2px 0 0; font: var(--t-caption); color: var(--c-text-muted); }
+.today-add { width: 40px; height: 40px; border-radius: 50%; background: var(--c-primary); color: var(--c-on-primary); display: grid; place-items: center; }
+.today-list { display: flex; flex-direction: column; gap: var(--s-sm); margin-top: var(--s-xl); }
+.today-label { font: var(--t-caption); color: var(--c-text-muted); text-transform: uppercase; letter-spacing: 0.08em; margin: var(--s-xl) 0 0; }
+.today-done-hero { text-align: center; padding: var(--s-xxl) 0 var(--s-lg); }
+.today-done-hero b { display: block; font: var(--t-display); letter-spacing: var(--ls-display); color: var(--c-text); }
+.today-done-hero span { font: var(--t-body); color: var(--c-text-muted); }
+.today-sheet h2 { margin: 0 0 var(--s-lg); font: var(--t-title); letter-spacing: var(--ls-title); color: var(--c-text); }
+.today-sheet .chips { display: flex; flex-wrap: wrap; gap: var(--s-sm); margin: var(--s-lg) 0 var(--s-xl); }
+.stats-week { display: grid; grid-template-columns: repeat(7, 1fr); align-items: end; gap: 10px; height: 160px; margin-top: var(--s-sm); }
+.stats-week i { display: block; border-radius: 8px 8px 4px 4px; background: var(--c-primary); }
+.stats-week i.low { background: var(--c-surface-raised); }
+.stats-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; font: var(--t-caption); color: var(--c-text-muted); text-align: center; }

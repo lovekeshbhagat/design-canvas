@@ -1,0 +1,21 @@
+<!--
+title: Today
+state: Default
+source: src/screens/TodayScreen.tsx
+-->
+<div class="sc-body sc-pad">
+  <div class="today-head" data-dc="header"><div><h1>Today</h1><p>Tuesday, 11 November</p></div><span class="today-add" data-dc="add-button">{{icon:plus}}</span></div>
+  <div class="p-card" data-dc="progress"><b style="font:var(--t-heading);color:var(--c-text)">3 of 5 done</b><div class="p-progress"><i style="width:60%"></i></div><span style="font:var(--t-caption);color:var(--c-text-muted)">Two left for today</span></div>
+  <p class="today-label">Morning</p>
+  <div class="today-list">
+    <div class="p-habit done" data-dc="habit-1"><span class="p-check on">{{icon:check}}</span><div class="meta"><span class="name">Drink water</span><span class="sub">{{icon:flame}} 12 day streak</span></div></div>
+    <div class="p-habit done" data-dc="habit-2"><span class="p-check on">{{icon:check}}</span><div class="meta"><span class="name">Stretch 5 minutes</span><span class="sub">{{icon:flame}} 6 day streak</span></div></div>
+    <div class="p-habit done" data-dc="habit-3"><span class="p-check on">{{icon:check}}</span><div class="meta"><span class="name">Make the bed</span><span class="sub">{{icon:flame}} 21 day streak</span></div></div>
+  </div>
+  <p class="today-label">Evening</p>
+  <div class="today-list">
+    <div class="p-habit" data-dc="habit-4"><span class="p-check"></span><div class="meta"><span class="name">Read 10 pages</span><span class="sub">{{icon:flame}} 4 day streak</span></div></div>
+    <div class="p-habit" data-dc="habit-5"><span class="p-check"></span><div class="meta"><span class="name">No phone after 10</span><span class="sub">Weekdays</span></div></div>
+  </div>
+</div>
+{{> tabbar active=today}}

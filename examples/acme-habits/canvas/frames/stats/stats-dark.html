@@ -1,0 +1,20 @@
+<!--
+title: Stats
+state: Dark theme
+theme: dark
+source: src/screens/StatsScreen.tsx
+-->
+<div class="sc-body sc-pad">
+  <div class="today-head" data-dc="header"><div><h1>Stats</h1><p>This week</p></div></div>
+  <div class="p-card" data-dc="progress">
+    <b style="font:var(--t-heading);color:var(--c-text)">26 of 35 check-ins</b>
+    <div class="stats-week" data-dc="week-chart"><i style="height:100%"></i><i style="height:80%"></i><i style="height:100%"></i><i style="height:60%"></i><i style="height:80%"></i><i class="low" style="height:40%"></i><i class="low" style="height:20%"></i></div>
+    <div class="stats-days"><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span></div>
+  </div>
+  <p class="today-label">Best streaks</p>
+  <div class="today-list">
+    <div class="p-habit" data-dc="habit-1"><span class="p-check on">{{icon:check}}</span><div class="meta"><span class="name">Make the bed</span><span class="sub">{{icon:flame}} 21 days</span></div></div>
+    <div class="p-habit" data-dc="habit-2"><span class="p-check on">{{icon:check}}</span><div class="meta"><span class="name">Drink water</span><span class="sub">{{icon:flame}} 12 days</span></div></div>
+  </div>
+</div>
+{{> tabbar active=stats}}

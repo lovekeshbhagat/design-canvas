@@ -1,0 +1,17 @@
+<!--
+title: Today
+state: All done
+source: src/screens/TodayScreen.tsx
+theme: dark
+note: Drawn in the dark theme to show both themes on one board.
+-->
+<div class="sc-body sc-pad">
+  <div class="today-head" data-dc="header"><div><h1>Today</h1><p>Tuesday, 11 November</p></div><span class="today-add" data-dc="add-button">{{icon:plus}}</span></div>
+  <div class="today-done-hero"><b>5 of 5</b><span>Every habit done today.</span></div>
+  <div class="today-list">
+    <div class="p-habit done" data-dc="habit-1"><span class="p-check on">{{icon:check}}</span><div class="meta"><span class="name">Drink water</span><span class="sub">{{icon:flame}} 12 day streak</span></div></div>
+    <div class="p-habit done" data-dc="habit-2"><span class="p-check on">{{icon:check}}</span><div class="meta"><span class="name">Read 10 pages</span><span class="sub">{{icon:flame}} 5 day streak</span></div></div>
+    <div class="p-habit done" data-dc="habit-3"><span class="p-check on">{{icon:check}}</span><div class="meta"><span class="name">No phone after 10</span><span class="sub">Weekdays</span></div></div>
+  </div>
+</div>
+{{> tabbar active=today}}
