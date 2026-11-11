@@ -56,7 +56,7 @@ Each person writes only their own file in `reviews/`, so git never conflicts. Re
 Pick whatever your agent supports. [docs/INSTALL.md](docs/INSTALL.md) has the exact folder and config for each tool.
 
 - **Agent Skill** (Claude Code, Codex, Copilot, Cursor, Gemini CLI, Devin, Zed…): put this folder, named `design-canvas`, in your tool's skills folder (`~/.agents/skills/` for most, `~/.claude/skills/` for Claude Code).
-- **Claude Code plugin**: `/plugin marketplace add <owner>/design-canvas`, then `/plugin install design-canvas@design-canvas`. This installs the skill and the MCP server.
+- **Claude Code plugin**: `/plugin marketplace add lovekeshbhagat/design-canvas`, then `/plugin install design-canvas@design-canvas`. This installs the skill and the MCP server.
 - **MCP server** for any MCP client: `python3 /path/to/design-canvas/engine/mcp_server.py`. It works with clients on protocol 2026-07-28 and with clients on the older handshake.
 - **Anything else**: tell your agent *"Follow /path/to/design-canvas/SKILL.md"*, or run the commands yourself. Every command takes `--json`.
 

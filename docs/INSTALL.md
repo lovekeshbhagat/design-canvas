@@ -15,7 +15,7 @@ design-canvas works with any coding agent in three ways. Use whichever your tool
 Put the folder where your tool looks for skills. `~/.agents/skills/` is the shared location most tools read. Claude Code reads `~/.claude/skills/`, so link it there too.
 
 ```bash
-git clone https://github.com/<owner>/design-canvas ~/.agents/skills/design-canvas
+git clone https://github.com/lovekeshbhagat/design-canvas ~/.agents/skills/design-canvas
 ln -s ~/.agents/skills/design-canvas ~/.claude/skills/design-canvas   # for Claude Code
 ```
 
@@ -38,7 +38,7 @@ Then open your app's repo and ask: *"Make a design guide and screen canvas for t
 The repo is also a Claude Code plugin and marketplace. It installs the skill and the MCP server together:
 
 ```
-/plugin marketplace add <owner>/design-canvas
+/plugin marketplace add lovekeshbhagat/design-canvas
 /plugin install design-canvas@design-canvas
 ```
 
