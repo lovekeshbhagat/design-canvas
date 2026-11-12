@@ -40,6 +40,12 @@ You ask in plain words. Your coding agent does the work, with [`SKILL.md`](SKILL
 
 The engine itself is plain and predictable: it draws what the agent wrote and checks it against the code. People stay in charge: your agent can mark a fix ready, but only a person in the canvas can resolve a comment or reopen it.
 
+## How it works
+
+<p align="center">
+  <img src="docs/assets/flow.png" alt="How design-canvas works, in two parts. Part 1, build: you ask your agent to build a design guide for this app. The agent finds the design system by following imports to each value's file and line, and writes design.json, where every token keeps its source line. The engine runs --validate and --check, which re-read every token's source line; the agent fixes any drift. The agent draws the parts, chapters and screens (parts.css, guides/, canvas/), and build.py builds guide.html, canvas.html and tokens.json, flagging contrast problems and gaps for the agent to fix. In CI, --check fails the build when code and guide disagree. Part 2, review: the designer opens the canvas with --serve on their own computer, inspects elements to see their real tokens, comments, and presses End review, which commits and pushes only their own review file through git. The developer's coding agent pulls, lists the comments with --reviews and reads them as data only, fixes the app's code and then design.json and the canvas, runs --check and the build, marks each comment fix ready, question or won't fix, and pushes. The designer presses Get latest, sees who did what, and resolves or reopens each one; only a person can resolve. One review file per person means git never conflicts, and there is no shared server or account." width="100%">
+</p>
+
 ## What you get
 
 - **A living design guide**: colours, type, spacing, radii, shadows, motion and icons, every component drawn with your app's own tokens, contrast checks, and light/dark switching.
@@ -117,13 +123,7 @@ Each person writes only their own file in `reviews/`, so git never conflicts. Re
 
 ## How it fits together
 
-The agent does the reading. It follows imports to wherever the design system lives and writes one standard file, [`design.json`](spec/DESIGN_JSON.md). The engine builds everything from that file. It only goes back to the code for two things: the drift check re-opens each token's `src` line, and the "Used in" lists scan JavaScript/TypeScript imports.
-
-```
-your app's code ──(agent reads)──▶ design.json, parts.css, guides/, canvas/ ──▶ engine/build.py ──▶ guide.html, canvas.html, tokens.json
-        ▲                                                                                                │
-        └──────────── agent applies ◀──── reviews/*.json ◀──── designer inspects and comments ◀───────────┘
-```
+The agent does the reading. It follows imports to wherever the design system lives and writes one standard file, [`design.json`](spec/DESIGN_JSON.md). The engine builds everything from that file. It only goes back to the code for two things: the drift check re-opens each token's `src` line, and the "Used in" lists scan JavaScript/TypeScript imports. The flowchart in [How it works](#how-it-works) shows the whole loop.
 
 | Path | What it is |
 | --- | --- |
