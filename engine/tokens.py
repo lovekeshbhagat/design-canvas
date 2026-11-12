@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import html
 import json
+import math
 import re
+from functools import lru_cache
 from pathlib import Path
 
 from reviews import safe_rel
@@ -26,7 +28,15 @@ ROLE_FALLBACK = {
     "danger": "#D93025",
     "scrim": "rgba(0, 0, 0, 0.5)",
 }
-TEXTY = re.compile(r"(^|[^a-z])(text|fg|foreground|label|ink|on[A-Z_-]|content)", re.I)
+# Words in a colour token's name that mark it as text, and words that mark it as a fill even when
+# a text word is there too ("textFieldBg"). Ambiguous words such as "ink" or "content" are left out:
+# apps use them for backgrounds as often as for text. Say it with `on` or `text` in design.json instead.
+TEXT_WORDS = {"text", "label", "foreground", "fg"}
+FILL_WORDS = {"bg", "background", "fill", "surface", "border", "stroke", "divider", "separator", "shadow",
+              "scrim", "overlay", "backdrop", "selection", "highlight"}
+FILL_ROLES = ("background", "surface", "surface2", "border", "scrim")
+TEXT_ROLES = ("text", "textMuted", "onAccent")
+DEFAULT_LINE_RATIO = 1.2  # stands in for "the platform default" where a format needs a number (DTCG)
 
 
 def esc(s) -> str:
@@ -115,16 +125,17 @@ class Design:
         self.theme_ids = [t["id"] for t in self.themes]
         self.default = self.theme_ids[0]
         self.colors = self._colors(raw.get("colors") or {})
+        self._read_on()
         self.roles = raw.get("roles") or {}
         self.fonts = raw.get("fonts") or {}
         self.type = {k: dict(v) for k, v in (raw.get("type") or {}).items()}
         self.spacing = self._numbers(raw.get("spacing") or {}, "spacing")
         self.radii = self._numbers(raw.get("radii") or {}, "radii")
-        self.shadows = {k: dict(v) for k, v in (raw.get("shadows") or {}).items()}
+        self.shadows = self._shadows(raw.get("shadows") or {})
         motion = raw.get("motion") or {}
         self.durations = self._numbers(motion.get("durations") or {}, "durations")
         self.easings = {k: (v if isinstance(v, dict) else {"value": v}) for k, v in (motion.get("easings") or {}).items()}
-        self.springs = {k: dict(v) for k, v in (motion.get("springs") or {}).items()}
+        self.springs = self._springs(motion.get("springs") or {})
         self.icons = raw.get("icons") or {"items": {}}
         self.components = raw.get("components") or {}
         self._validate()
@@ -147,6 +158,8 @@ class Design:
                 self.errors.append(f"colors.{k}: needs a value for the default theme '{self.default}'")
                 continue
             for t in self.theme_ids:
+                if t not in per:
+                    self.warnings.append(f"colors.{k} has no value for the '{t}' theme; using '{self.default}'")
                 per.setdefault(t, per[self.default])
             parsed = {}
             for t, s in per.items():
@@ -159,6 +172,46 @@ class Design:
             out[k] = meta
         return out
 
+    def _read_on(self):
+        """`on`: the fill(s) a colour is read on. A name, a list of names, or one of those per theme.
+        Stored per theme as a list under `_on`."""
+        def names(x):
+            if isinstance(x, str) and x:
+                return [x]
+            if isinstance(x, list) and x and all(isinstance(n, str) and n for n in x):
+                return list(x)
+            return None
+
+        for k, meta in self.colors.items():
+            if "text" in meta and not isinstance(meta["text"], bool):
+                self.errors.append(f"colors.{k}.text: use true or false")
+            on = meta.get("on")
+            if on is None:
+                continue
+            raw = dict(on) if isinstance(on, dict) else {t: on for t in self.theme_ids}
+            unknown = [t for t in raw if t not in self.theme_ids]
+            if unknown:
+                self.errors.append(f"colors.{k}.on: unknown theme(s) {', '.join(unknown)}")
+            if not raw or self.default not in raw:
+                self.errors.append(f"colors.{k}.on: needs a value for the default theme '{self.default}'")
+                continue
+            per = {}
+            for t in self.theme_ids:
+                if t not in raw:
+                    self.warnings.append(f"colors.{k}.on has no value for the '{t}' theme; using '{self.default}'")
+                got = names(raw.get(t, raw[self.default]))
+                if got is None:
+                    self.errors.append(f"colors.{k}.on: give a colour token name, a list of names, or one of those per theme")
+                    per = None
+                    break
+                per[t] = got
+            if per is None:
+                continue
+            for n in sorted({n for v in per.values() for n in v}):
+                if n not in self.colors:
+                    self.errors.append(f"colors.{k}.on: '{n}' is not a colour token")
+            meta["_on"] = per
+
     def _numbers(self, raw, where):
         out = {}
         for k, v in raw.items():
@@ -166,6 +219,52 @@ class Design:
             if not isinstance(meta.get("value"), (int, float)):
                 self.errors.append(f"{where}.{k}: value must be a number")
                 continue
+            out[k] = meta
+        return out
+
+    def _shadows(self, raw):
+        """A shadow may give `radius` (SwiftUI/UIKit write a radius about half the CSS blur): blur = 2 x radius."""
+        out = {}
+        for k, v in raw.items():
+            meta = dict(v) if isinstance(v, dict) else {}
+            r = meta.get("radius")
+            if r is not None and not isinstance(r, (int, float)):
+                self.errors.append(f"shadows.{k}: radius must be a number")
+            elif r is not None and "blur" not in meta:
+                meta["blur"] = r * 2
+            out[k] = meta
+        return out
+
+    def _springs(self, raw):
+        """SwiftUI-style springs (response + dampingFraction, or duration + bounce, in seconds) also get the
+        stiffness and damping that CSS, DTCG and previews use: stiffness = (2pi / response)^2 x mass,
+        damping = 4pi x dampingFraction x mass / response. mass defaults to 1."""
+        out = {}
+        for k, v in raw.items():
+            meta = dict(v) if isinstance(v, dict) else {}
+            fields = ("damping", "stiffness", "mass", "response", "dampingFraction", "duration", "bounce")
+            bad = [f for f in fields if f in meta and not isinstance(meta[f], (int, float))]
+            if bad:
+                self.errors.append(f"springs.{k}: {', '.join(bad)} must be a number")
+                out[k] = meta
+                continue
+            mass = meta.get("mass", 1)
+            response = frac = None
+            if "response" in meta or "dampingFraction" in meta:
+                response, frac = meta.get("response", 0.5), meta.get("dampingFraction", 0.825)  # SwiftUI's defaults
+            elif "duration" in meta or "bounce" in meta:
+                response, bounce = meta.get("duration", 0.5), meta.get("bounce", 0)
+                if not -1 < bounce <= 1:
+                    self.errors.append(f"springs.{k}: bounce must be above -1 and at most 1")
+                    out[k] = meta
+                    continue
+                frac = 1 - bounce if bounce >= 0 else 1 / (1 + bounce)
+            if response is not None:
+                if response <= 0 or frac < 0:
+                    self.errors.append(f"springs.{k}: response (or duration) must be above 0 and dampingFraction 0 or more")
+                else:
+                    meta.setdefault("stiffness", round((2 * math.pi / response) ** 2 * mass, 2))
+                    meta.setdefault("damping", round(4 * math.pi * frac * mass / response, 2))
             out[k] = meta
         return out
 
@@ -197,14 +296,42 @@ class Design:
                 except ValueError as e:
                     self.errors.append(f"shadows.{k}: {e}")
         for k, v in (self.icons.get("items") or {}).items():
+            if not isinstance(v, dict) or not (isinstance(v.get("svg"), str) or isinstance(v.get("system"), str)):
+                self.errors.append(f"icons.items.{k}: give svg (the icon's shapes) or, for an operating-system icon, system and name")
+                continue
             if "<svg" in v.get("svg", ""):
                 self.errors.append(f"icons.items.{k}: give only the inner shapes, without the <svg> wrapper")
             if re.search(r"<script|on\w+\s*=", v.get("svg", ""), re.I):
                 self.errors.append(f"icons.items.{k}: scripts and event handlers are not allowed")
         if self.frame["device"] not in ("phone", "browser", "none"):
             self.errors.append("app.frame.device must be phone, browser or none")
+        self._validate_sources()
+
+    def _validate_sources(self):
+        """`code` and `src` are strings, or objects with one string per theme id."""
+        groups = (("colors", self.colors), ("fonts", self.fonts), ("type", self.type), ("spacing", self.spacing), ("radii", self.radii),
+                  ("shadows", self.shadows), ("durations", self.durations), ("easings", self.easings), ("springs", self.springs))
+        for where, items in groups:
+            for k, v in items.items():
+                for field in ("code", "src"):
+                    val = v.get(field) if isinstance(v, dict) else None
+                    if val is None or isinstance(val, str):
+                        continue
+                    if not isinstance(val, dict) or not val or not all(isinstance(x, str) for x in val.values()):
+                        self.errors.append(f"{where}.{k}: {field} must be a string, or an object with one string per theme")
+                        continue
+                    unknown = [t for t in val if t not in self.theme_ids]
+                    if unknown:
+                        self.errors.append(f"{where}.{k}: {field} names unknown theme(s) {', '.join(unknown)}")
 
     # -- helpers
+    @staticmethod
+    def code_text(code) -> str:
+        """A token's `code` for display: per-theme objects become 'light: A · dark: B'."""
+        if isinstance(code, dict):
+            return " · ".join(f"{t}: {c}" for t, c in code.items())
+        return str(code or "")
+
     def role_token(self, role):
         return self.roles.get(role)
 
@@ -237,11 +364,12 @@ class Design:
         return f"'{fam}', {generic}"
 
     def line_height(self, v):
+        """The line height in px as the code sets it, or None when the code leaves it to the platform."""
         if "lineHeight" in v:
             return v["lineHeight"]
         if "lineHeightRatio" in v:
             return round(v["size"] * v["lineHeightRatio"], 2)
-        return round(v["size"] * 1.3, 2)
+        return None
 
     def shadow_rgba(self, v):
         c = v.get("color", "#000000")
@@ -304,7 +432,8 @@ class Design:
         for k, v in self.type.items():
             f = self.type_font(k)
             style = "italic " if f.get("style") == "italic" else ""
-            root.append(f"  --t-{kebab(k)}: {style}{f.get('weight', 400)} {num(v['size'])}px/{num(self.line_height(v))}px {self.font_stack(f)};")
+            lh = self.line_height(v)
+            root.append(f"  --t-{kebab(k)}: {style}{f.get('weight', 400)} {num(v['size'])}px/{num(lh) + 'px' if lh is not None else 'normal'} {self.font_stack(f)};")
             root.append(f"  --ls-{kebab(k)}: {num(v.get('letterSpacing', 0))}px;")
         for k, v in self.spacing.items():
             root.append(f"  --s-{kebab(k)}: {num(v['value'])}px;")
@@ -360,6 +489,12 @@ class Design:
         vb = self.icons.get("viewBox", "0 0 24 24")
         out = []
         for k, v in (self.icons.get("items") or {}).items():
+            if not isinstance(v, dict) or not isinstance(v.get("svg"), str):
+                # a system icon (SF Symbols, Material Symbols…): a neutral dashed placeholder, never its artwork
+                out.append(f'<symbol id="i-{esc(k)}" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="5" fill="currentColor" '
+                           'fill-opacity="0.12" stroke="currentColor" stroke-width="1.5" stroke-dasharray="3 2.4"/>'
+                           '<circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/></symbol>')
+                continue
             inner = v["svg"]
             st = v.get("style", base_style)
             if st != base_style or "strokeWidth" in v:
@@ -399,9 +534,15 @@ class Design:
             out["type"] = {}
             for k, v in self.type.items():
                 f = self.type_font(k)
+                lh = self.line_height(v)
+                # DTCG typography needs a lineHeight number. When the code sets none, write the usual
+                # default and say so in $extensions, so no tool takes it for a value from the app.
                 out["type"][k] = {"$type": "typography", "$value": {
                     "fontFamily": f.get("family", "system-ui"), "fontWeight": f.get("weight", 400), "fontSize": dim(v["size"]),
-                    "lineHeight": round(self.line_height(v) / v["size"], 3), "letterSpacing": dim(v.get("letterSpacing", 0))}, **d(v)}
+                    "lineHeight": round(lh / v["size"], 3) if lh is not None else DEFAULT_LINE_RATIO,
+                    "letterSpacing": dim(v.get("letterSpacing", 0))}, **d(v)}
+                if lh is None:
+                    out["type"][k]["$extensions"] = {"dev.design-canvas": {"lineHeight": "platform default"}}
         if self.spacing:
             out["space"] = {k: {"$type": "dimension", "$value": dim(v["value"]), **d(v)} for k, v in self.spacing.items()}
         if self.radii:
@@ -424,7 +565,8 @@ class Design:
         if eas:
             out["easing"] = eas
         if self.springs:
-            out["$extensions"] = {"dev.design-canvas": {"springs": {k: {x: v[x] for x in ("damping", "stiffness", "mass") if x in v} for k, v in self.springs.items()}}}
+            fields = ("damping", "stiffness", "mass", "response", "dampingFraction", "duration", "bounce")
+            out["$extensions"] = {"dev.design-canvas": {"springs": {k: {x: v[x] for x in fields if x in v} for k, v in self.springs.items()}}}
         return out
 
     # ------------------------------------------------------------ contrast
@@ -440,213 +582,237 @@ class Design:
                     return cand
         return self.roles.get("background")
 
-    def ratios(self, token):
-        """{theme: ratio against the colour this token is read on} for one colour token."""
-        bgk = self.partner(token)
-        out = {}
+    def fills(self, token, theme):
+        """The colour tokens `token` is read on in `theme`: its `on` list, else its partner."""
+        on = self.colors[token].get("_on")
+        names = on[theme] if on else [self.partner(token)]
+        return [n for n in names if n and n != token]
+
+    def pairs(self, token):
+        """[(fill, {theme: ratio})]: the contrast of `token` on each colour it is read on."""
+        out: dict[str, dict] = {}
         for t in self.theme_ids:
-            fg, bg = self.color_in(token, t), self.color_in(bgk, t)
-            if fg and bg:
-                out[t] = contrast(fg, bg)
-        return out
+            fg = self.color_in(token, t)
+            for f in self.fills(token, t):
+                bg = self.color_in(f, t)
+                if fg and bg:
+                    out.setdefault(f, {})[t] = contrast(fg, bg)
+        return list(out.items())
+
+    def ratios(self, token):
+        """{theme: ratio} on the first colour this token is read on."""
+        p = self.pairs(token)
+        return p[0][1] if p else {}
 
     def is_texty(self, token):
-        return token in (self.roles.get("text"), self.roles.get("textMuted")) or bool(TEXTY.search(token)) or "text" in (self.colors[token].get("group", "").lower())
+        """Is this colour used for text? From `text` in design.json, then `on`, then the roles, then
+        the name or group (only clearly textual words count)."""
+        meta = self.colors[token]
+        if isinstance(meta.get("text"), bool):
+            return meta["text"]
+        if meta.get("on") is not None:
+            return True
+        roles = {r: self.roles.get(r) for r in TEXT_ROLES + FILL_ROLES}
+        if token in (roles[r] for r in TEXT_ROLES):
+            return True
+        if token in (roles[r] for r in FILL_ROLES):
+            return False
+        words = kebab(token).split("-")
+        if len(words) > 1 and words[0] == "on":  # onPrimary, on-surface, on_accent
+            return True
+        for w in (words, kebab(meta.get("group") or "").split("-")):
+            if TEXT_WORDS & set(w) and not FILL_WORDS & set(w):
+                return True
+        return False
+
+    def text_colors(self):
+        return [k for k in self.colors if self.is_texty(k)]
 
     def contrast_problems(self):
         out = []
-        for k in self.colors:
-            if not self.is_texty(k):
-                continue
-            on = self.partner(k)
-            for t, r in self.ratios(k).items():
-                if r < 4.5:
-                    out.append(f"`{k}` on `{on}` is {r}:1 in the {t} theme (text needs 4.5:1)")
+        for k in self.text_colors():
+            for on, rs in self.pairs(k):
+                for t, r in rs.items():
+                    if r < 4.5:
+                        out.append(f"`{k}` on `{on}` is {r}:1 in the {t} theme (text needs 4.5:1)")
         return out
 
     # ------------------------------------------------------------ drift check
     def check(self, root: Path | None = None):
         """Compare every token with the code its `src` points at.
 
-        Returns (drifted, ok_count, derived, unsourced): `unsourced` lists tokens
-        that have neither a `src` nor a `derived` note, so they could not be checked.
+        Returns a DriftResult. It unpacks like the old tuple (drifted, ok_count, derived, unsourced):
+        `unsourced` lists tokens that have neither a `src` nor a `derived` note. It also carries
+        `not_checked` (fields the code does not state, such as "type.title weight"), `could_check`
+        (derived tokens whose note names a file:line), `total` and `derived_share`.
+
+        Where a value is looked for: each comma part of `src` is one `path:line` (or a whole file).
+        If the src line defines the token's name, only that definition counts. If not, the src line
+        itself is tried first, then the nearest definition of the name within 8 lines (code moves).
+        Other numbers or colours nearby never count.
         """
         root = Path(root or self.root)
-        problems, ok, skipped, unsourced = [], 0, [], []
-        cache: dict[str, list[str]] = {}
+        problems, ok, skipped, unsourced, not_checked, could = [], 0, [], [], [], []
+        total = 0
+        cache: dict = {}
 
-        def window(src):
-            texts = []
+        def read(path):
+            if path not in cache:
+                try:
+                    cache[path] = (root / path).read_text(encoding="utf-8", errors="replace").splitlines()
+                except OSError:
+                    cache[path] = None
+            return cache[path]
+
+        def lookups(src, names):
+            """-> ([Look, ...], error): the texts to test, best first. Each joins one piece per src part."""
+            options = []
             for part in [s.strip() for s in src.split(",") if s.strip()]:
                 m = re.match(r"(.+?)(?::(\d+))?$", part)
-                path, line = m.group(1), m.group(2)
+                path, line = m.group(1).strip(), m.group(2)
                 if not safe_rel(root, path):
                     return None, f"src must be a relative path inside the app root: {path}"
-                f = (root / path)
-                if path not in cache:
-                    try:
-                        cache[path] = f.read_text(encoding="utf-8", errors="replace").splitlines()
-                    except OSError:
-                        cache[path] = None
-                lines = cache[path]
+                lines = read(path)
                 if lines is None:
                     return None, f"source file not found: {path}"
-                if line:
-                    n = int(line)
-                    texts.append("\n".join(lines[max(0, n - 9): n + 8]))
-                else:
-                    texts.append("\n".join(lines))
-            return "\n".join(texts), None
-
-        def has_number(text, n):
-            s = num(n)
-            return re.search(rf"(?<![\w.]){re.escape(s)}(?:\.0+)?(?![\d])", text) is not None
-
-        def has_color(text, rgba):
-            want = to_hex(rgba)[1:]
-            found = set()
-            for m in re.finditer(r"(?:#|0x)([0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3})(?![0-9a-fA-F])", text):
-                h = m.group(1).lower()
-                if len(h) == 3:
-                    found.add("".join(c * 2 for c in h))
-                elif len(h) == 6:
-                    found.add(h)
-                else:
-                    found.update((h[:6], h[2:]))  # RRGGBBAA or AARRGGBB
-            if want in found:
-                return True
-            r, g, b = rgba[:3]
-            if re.search(rf"(?<!\d){r}\D{{1,6}}{g}\D{{1,6}}{b}(?!\d)", text):
-                return True
-            # Named components: iOS .colorset JSON ("red" : "0x3B" / "0.231" / "59"),
-            # SwiftUI Color(red: 0.231, ...), UIColor(red: 59/255, ...).
-            cur = {}
-            for m in re.finditer(r"['\"]?\b(red|green|blue)['\"]?\s*[:=]\s*['\"]?(0x[0-9a-fA-F]{1,2}|\d*\.\d+|\d+)(\s*/\s*255(?:\.0+)?)?", text, re.I):
-                key, raw, over255 = m.group(1).lower(), m.group(2), m.group(3)
-                if key in cur:
-                    cur = {}
-                cur[key] = (raw, bool(over255))
-                if len(cur) == 3:
-                    comps = component_values(cur)
-                    if all(abs(comps[k] - want_v) <= 1 for k, want_v in (("red", r), ("green", g), ("blue", b))):
-                        return True
-            return False
-
-        def component_values(cur):
-            """red/green/blue as 0-255. Hex and x/255 are already 0-255. Plain numbers are 0-1 when all three are
-            at most 1 (SwiftUI Color(red: 1, green: 0, blue: 0)); otherwise a decimal <= 1 is 0-1 and the rest 0-255."""
-            plain = all(not o and not v.lower().startswith("0x") for v, o in cur.values())
-            unit = plain and all(float(v) <= 1.0 for v, _ in cur.values())
-            out = {}
-            for k, (v, o) in cur.items():
-                if v.lower().startswith("0x"):
-                    out[k] = int(v, 16)
-                elif unit or ("." in v and not o and float(v) <= 1.0):
-                    out[k] = float(v) * 255
-                else:
-                    out[k] = float(v)
-            return out
-
-        def names_for(key, meta):
-            """Names the token may be defined under, most specific first."""
-            out = []
-            code = (meta.get("code") or "").strip()
-            bare = code.replace("var(", "").split(")")[0].strip()
-            if bare.startswith("--"):
-                out.append(bare)  # a CSS custom property
-            elif code:
-                segs = [x for x in re.split(r"[.\[\]'\"\s/()]+", code) if x]  # getColor('on-primary') -> on-primary
-                if segs:
-                    out.append(segs[-1])  # colors['on-primary'] -> on-primary
-            out.append(key)
-            if code:
-                words = [x for x in re.split(r"[.\[\]'\"\s/()-]+", code) if x]
-                if words:
-                    out.append(words[-1])  # looser: only the last word
-            return [n for i, n in enumerate(out) if n and n not in out[:i]]
-
-        def key_rx(name):
-            """`name: …`, `name = …`, `name(…`, `"name": …` (any case)."""
-            return rf"(?<![\w$-])['\"]?{re.escape(name)}['\"]?\s*[:=(]"
-
-        def defn(name):
-            # also Android/XML resources: <color name="primary">…
-            return re.compile(rf"{key_rx(name)}|\bname\s*=\s*['\"]{re.escape(name)}['\"]", re.I)
-
-        def block_for(text, names):
-            """The lines that define the most specific of `names` found here (plus the rest of a multi-line object).
-            A looser name is only used when no better one is defined, so 'on-primary' never borrows primary's line."""
-            lines = text.split("\n")
-            for n in names:
-                rx = defn(n)
-                keep = []
-                for i, l in enumerate(lines):
-                    m = rx.search(l)
-                    if not m:
-                        continue
-                    seg = [l[m.start():]]
-                    depth = seg[0].count("{") + seg[0].count("(") - seg[0].count("}") - seg[0].count(")")
-                    j = i
-                    while depth > 0 and j + 1 < len(lines) and j - i < 12:
-                        j += 1
-                        seg.append(lines[j])
-                        depth += lines[j].count("{") + lines[j].count("(") - lines[j].count("}") - lines[j].count(")")
-                    keep.append("\n".join(seg))
-                if keep:
-                    return "\n".join(keep)
-            return None
-
-        def number_for(text, block, names, n):
-            if block is None:
-                return has_number(text, n)
-            s = re.escape(num(n))
-            direct = [nm for nm in names if re.search(key_rx(nm) + r"\s*['\"]?-?\d", block, re.I)]
-            if direct:
-                return any(re.search(key_rx(nm) + rf"\s*['\"]?{s}(?:\.0+)?(?![\d])", block, re.I) for nm in direct)
-            return has_number(block, n)
+                if not line:
+                    whole = "\n".join(lines)
+                    options.append([_definitions(lines, range(len(lines)), names) or _Look(whole, whole, "file")])
+                    continue
+                i = int(line) - 1
+                if not 0 <= i < len(lines):
+                    return None, f"line {line} is past the end of {path} ({len(lines)} lines)"
+                own = _definitions(lines, [i], names)
+                if own:
+                    options.append([own])
+                    continue
+                near = _definitions(lines, range(max(0, i - 8), min(len(lines), i + 9)), names, nearest=i)
+                options.append([_src_line(lines, i)] + ([near] if near else []))
+            looks = [_Look.join([o[0] for o in options])]
+            if any(len(o) > 1 for o in options):
+                looks.append(_Look.join([o[-1] for o in options]))
+            return looks, None
 
         def run(label, key, meta, tests):
-            nonlocal ok
+            """tests: [(field, shown value, fn(look), theme)]. fn returns True (matches), None (the code
+            does not state it), or False / a hint string (drift)."""
+            nonlocal ok, total
+            total += 1
             if meta.get("derived"):
                 skipped.append(f"{label}: {meta['derived']}")
+                m = _SRC_IN_NOTE.search(str(meta["derived"]))
+                if m:
+                    could.append(f"{label} (its note names {m.group(0)})")
                 return
             if not meta.get("src"):
                 unsourced.append(label)
                 return
-            text, err = window(meta["src"])
-            if err:
-                problems.append(f"`{label}`: {err}")
-                return
-            block = block_for(text, names_for(key, meta))
-            missing = [what for what, test in tests if not test(text, block)]
-            if missing:
-                problems.append(f"`{label}`: {', '.join(missing)} not found " + ("where it is defined" if block else "near") + f" ({meta['src']})")
+            per_theme = isinstance(meta.get("src"), dict) or isinstance(meta.get("code"), dict)
+            failed, unknown = [], []
+            for theme in dict.fromkeys(t[3] for t in tests) or [None]:
+                src = self._pick(meta.get("src"), theme)
+                looks, err = lookups(src, _names_for(key, self._pick(meta.get("code"), theme, join=False)))
+                if err:
+                    problems.append(f"`{label}`: {err}")
+                    return
+                group = [t for t in tests if t[3] == theme]
+                tried = []
+                for look in looks:
+                    res = [(f, shown, fn(look)) for f, shown, fn, _ in group]
+                    bad = [(f, shown, r) for f, shown, r in res if r is False or isinstance(r, str)]
+                    tried.append((look, bad, [f for f, _, r in res if r is None], sum(r is True for _, _, r in res)))
+                # A look that matches wins (fewest unstated fields first). Else the last one that says anything
+                # (a definition of the name before the bare src line), so a src line that states nothing never hides drift.
+                good = [x for x in tried if not x[1] and x[3]]
+                said = [x for x in tried if x[1] or x[3]]
+                look, bad, none, _ = min(good, key=lambda x: len(x[2])) if good else (said or tried)[-1]
+                tag = f" ({theme})" if theme and per_theme else ""
+                if bad:
+                    where = {"defined": "where it is defined", "line": "on its src line", "file": "in the file"}[look.how]
+                    what = ", ".join(f"{f} {shown}" + (f" ({r})" if isinstance(r, str) else "") for f, shown, r in bad)
+                    failed.append(f"{what} not found {where}{tag} ({src})")
+                unknown += [f"{label} {f}{tag}" for f in none]
+            if failed:
+                problems.append(f"`{label}`: " + "; ".join(failed))
             else:
                 ok += 1
+            not_checked.extend(u for u in dict.fromkeys(unknown) if u not in not_checked)
+
+        def number_test(names, wants):
+            def fn(look):
+                direct = _direct_values(look.text, names)
+                if direct:
+                    return any(_close(v, w) for v in direct for w in wants)
+                return any(_has_number(look.text, w) for w in wants)
+            return fn
 
         for k, c in self.colors.items():
-            vals = {to_hex(v) + (f"@{v[3]}" if v[3] != 1 else ""): v for v in c["rgba"].values()}
-            run(f"colors.{k}", k, c, [(f"colour {h}", (lambda t, b, v=v: has_color(b if b is not None else t, v))) for h, v in vals.items()])
+            per_theme = isinstance(c.get("src"), dict) or isinstance(c.get("code"), dict)
+            pairs = [(t, c["rgba"][t]) for t in self.theme_ids if t in c["rgba"]] if per_theme else \
+                [(None, v) for v in {to_hex(v) + f"@{v[3]}": v for v in c["rgba"].values()}.values()]
+            tests = []
+            for theme, v in pairs:
+                tests.append(("colour", to_hex(v), lambda L, v=v: _has_color(L.text, v), theme))
+                tests.append(("alpha", num(v[3]), lambda L, a=v[3]: _alpha_test(L.text, a), theme))
+            run(f"colors.{k}", k, c, tests)
         for k, v in self.type.items():
-            tests = [(f"size {num(v['size'])}", lambda t, b, n=v["size"]: has_number(b if b is not None else t, n))]
-            if "lineHeight" in v:
-                tests.append((f"line height {num(v['lineHeight'])}", lambda t, b, n=v["lineHeight"]: has_number(b if b is not None else t, n)))
+            names = _names_for(k, self._pick(v.get("code"), None, join=False))
+            tests = [("size", num(v["size"]), lambda L, n=v["size"], nm=names: _type_number(L, "size", n, nm, strict=True), None)]
+            for field, shown in (("lineHeight", "line height"), ("lineHeightRatio", "line height ratio"), ("letterSpacing", "letter spacing")):
+                if isinstance(v.get(field), (int, float)):
+                    tests.append((shown, num(v[field]), lambda L, n=v[field], f=field: _type_number(L, f, n, [], strict=False), None))
+            weight = (self.fonts.get(v.get("font")) or {}).get("weight")
+            if isinstance(weight, (int, float)):
+                tests.append(("weight", num(weight), lambda L, w=weight: _weight_test(L, w), None))
             run(f"type.{k}", k, v, tests)
         for group, items in (("spacing", self.spacing), ("radii", self.radii), ("durations", self.durations)):
             for k, v in items.items():
-                names = names_for(k, v)
-                run(f"{group}.{k}", k, v, [(f"value {num(v['value'])}", lambda t, b, n=v["value"], nm=names: number_for(t, b, nm, n))])
+                names = _names_for(k, self._pick(v.get("code"), None, join=False))
+                wants = [v["value"]] + ([v["value"] / 1000] if group == "durations" else [])  # seconds in SwiftUI/Android code
+                run(f"{group}.{k}", k, v, [("value", num(v["value"]), number_test(names, wants), None)])
+        raw_shadows = self.raw.get("shadows") if isinstance(self.raw.get("shadows"), dict) else {}
         for k, v in self.shadows.items():
-            run(f"shadows.{k}", k, v, [(f"{x} {num(v[x])}", lambda t, b, n=v[x]: has_number(b if b is not None else t, n)) for x in ("y", "blur") if x in v])
+            written = raw_shadows.get(k) if isinstance(raw_shadows.get(k), dict) else {}
+            fields = ["x", "y"] + (["blur"] if "blur" in written or "radius" not in written else []) + ["spread"]
+            fields += [f for f in ("radius", "elevation") if f in written]
+            tests = [(f, num(v.get(f, 0)), lambda L, f=f, n=v.get(f, 0), r="radius" in written: _shadow_number(L.text, f, n, r), None)
+                     for f in fields if isinstance(v.get(f, 0), (int, float))]
+            c = v.get("color", "#000000")
+            rgba = self.color_in(c, self.default) if c in self.colors else _parse_or_none(c)
+            if rgba:
+                cnames = _names_for(c, self._pick(self.colors[c].get("code"), None, join=False)) if c in self.colors else []
+                alpha = v.get("opacity", rgba[3])
+                tests.append(("colour", c if c in self.colors else to_hex(rgba), lambda L, x=rgba, nm=cnames: _shadow_color(L.text, x, nm), None))
+                tests.append(("opacity", num(alpha), lambda L, a=alpha: _alpha_test(L.text, a), None))
+            run(f"shadows.{k}", k, v, tests)
+        raw_springs = (self.raw.get("motion") or {}).get("springs") if isinstance(self.raw.get("motion"), dict) else {}
+        raw_springs = raw_springs if isinstance(raw_springs, dict) else {}
         for k, v in self.springs.items():
-            run(f"springs.{k}", k, v, [(f"{x} {num(v[x])}", lambda t, b, n=v[x]: has_number(b if b is not None else t, n)) for x in ("damping", "stiffness") if x in v])
+            written = raw_springs.get(k) if isinstance(raw_springs.get(k), dict) else {}
+            run(f"springs.{k}", k, v, [(f, num(written[f]), lambda L, f=f, n=written[f]: _spring_number(L.text, f, n), None)
+                                        for f in _SPRING_LABELS if isinstance(written.get(f), (int, float))])
         for k, v in self.easings.items():
             nums = re.findall(r"-?\d*\.?\d+", v.get("value", ""))
-            run(f"easings.{k}", k, v, [(f"value {v.get('value')}", lambda t, b, ns=nums: all(has_number(b if b is not None else t, float(n)) for n in ns))])
+            run(f"easings.{k}", k, v, [("value", v.get("value"), lambda L, ns=nums: all(_has_number(L.text, float(n)) for n in ns), None)])
         for k, f in self.fonts.items():
             fam = f.get("family", "")
-            run(f"fonts.{k}", k, f, [(f"family {fam}", lambda t, b, s=fam: re.search(re.escape(s).replace(r"\ ", r"[\s_-]?"), t, re.I) is not None)])
-        return problems, ok, skipped, unsourced
+            tests = [("family", fam, lambda L, s=fam: re.search(re.escape(s).replace(r"\ ", r"[\s_-]?"), L.text, re.I) is not None, None)]
+            if isinstance(f.get("weight"), (int, float)):
+                tests.append(("weight", num(f["weight"]), lambda L, w=f["weight"]: _weight_test(L, w), None))
+            run(f"fonts.{k}", k, f, tests)
+        return DriftResult(problems, ok, skipped, unsourced, not_checked, could, total)
+
+    def _pick(self, value, theme, join=True):
+        """One theme's `src` or `code` from a per-theme object. theme None: every theme's, joined with ', '
+        for src (join=True) or as a list for code names."""
+        if not isinstance(value, dict):
+            return value
+        if theme is None:
+            vals = list(dict.fromkeys(value.values()))
+            return ", ".join(vals) if join else vals
+        if theme in value:
+            return value[theme]
+        return value.get(self.default) or next(iter(value.values()), None)
 
     # ------------------------------------------------------------ "Used in" lists
     def usage(self, root: Path | None = None) -> dict[str, list[str]]:
@@ -698,7 +864,8 @@ class Design:
             out += ["", "## Type", "", "| Style | Size / line | Face | Use |", "| --- | --- | --- | --- |"]
             for k, v in self.type.items():
                 f = self.type_font(k)
-                out.append(f"| `{k}` | {num(v['size'])} / {num(self.line_height(v))} | {f.get('family')} {f.get('weight', 400)}{' italic' if f.get('style') == 'italic' else ''} | {v.get('doc', '')} |")
+                lh = self.line_height(v)
+                out.append(f"| `{k}` | {num(v['size'])} / {num(lh) if lh is not None else 'platform default'} | {f.get('family')} {f.get('weight', 400)}{' italic' if f.get('style') == 'italic' else ''} | {v.get('doc', '')} |")
         for title, items, unit in (("Spacing", self.spacing, "px"), ("Radius", self.radii, "px"), ("Duration", self.durations, "ms")):
             if items:
                 out += ["", f"## {title}", "", "| Token | Value | Use |", "| --- | --- | --- |"]
@@ -710,3 +877,486 @@ class Design:
         if drift_items is not None:
             out += ["", "## Drift check", ""] + ([f"- {d}" for d in drift_items] or ["Every token with a `src` still matches the code."])
         return "\n".join(out) + "\n"
+
+
+# ---------------------------------------------------------------- drift check helpers
+class DriftResult(tuple):
+    """What Design.check() returns. Unpacks like a tuple (drifted, ok_count, derived, unsourced) and adds
+    not_checked (fields the code does not state), could_check (derived tokens whose note names a file:line),
+    total (tokens looked at) and derived_share (0-1)."""
+
+    def __new__(cls, problems, ok, derived, unsourced, not_checked=(), could_check=(), total=0):
+        self = tuple.__new__(cls, (problems, ok, derived, unsourced))
+        self.not_checked = list(not_checked)
+        self.could_check = list(could_check)
+        self.total = total
+        self.derived_share = round(len(derived) / total, 4) if total else 0.0
+        return self
+
+
+class _Look:
+    """Text a token's values are looked for in. how: 'defined' (a definition of its name), 'line' (the src
+    line itself) or 'file' (a whole file). value is the text after the defining key."""
+
+    def __init__(self, text, value, how, first=0, last=0):
+        self.text, self.value, self.how, self.first, self.last = text, value, how, first, last
+
+    @staticmethod
+    def join(looks):
+        how = "defined" if any(x.how == "defined" for x in looks) else looks[0].how
+        return _Look("\n".join(x.text for x in looks), "\n".join(x.value for x in looks), how, looks[0].first, looks[0].last)
+
+
+_NUM = r"-?(?:\d+(?:\.\d*)?|\.\d+)"
+_SRC_IN_NOTE = re.compile(r"[\w./-]+\.[A-Za-z]\w*:\d+")
+
+
+def _close(a, b) -> bool:
+    return abs(a - b) <= 1e-6 * max(1.0, abs(b))
+
+
+def _has_number(text, n) -> bool:
+    s = num(n)
+    if "." in s:
+        body = re.escape(s).replace(r"0\.", r"0?\.", 1) + "0*"  # .25 as well as 0.25, and 0.250
+    else:
+        body = re.escape(s) + r"(?:\.0+)?"
+    return re.search(rf"(?<![\w.]){body}(?!\d|\.\d)", text) is not None
+
+
+def _key_rx(name):
+    """A definition of `name`: `name: …`, `name = …`, `name(…`, `"name": …`, `name -> …`, and Swift/Kotlin
+    `.name: …` or `case .headline, .body: …`. A call such as `.sheet(` is not a definition."""
+    n = re.escape(name)
+    return (rf"(?:(?<![\w$.-])['\"]?{n}['\"]?\s*(?:[:(]|=(?!=)|->)"
+            rf"|(?<=\.){n}(?:\s*,\s*\.[A-Za-z_]\w*)*\s*(?::|=(?!=)|->))")
+
+
+@lru_cache(maxsize=None)
+def _defn(name):
+    # also Android/XML resources: <color name="primary">…
+    return re.compile(rf"{_key_rx(name)}|\bname\s*=\s*['\"]{re.escape(name)}['\"]", re.I)
+
+
+def _names_for(key, code):
+    """Names the token may be defined under, most specific first. `code` is a string or a list of them."""
+    codes = [c.strip() for c in (code if isinstance(code, list) else [code]) if isinstance(c, str) and c.strip()]
+    out = []
+    for c in codes:
+        bare = c.replace("var(", "").split(")")[0].strip()
+        if bare.startswith("--"):
+            out.append(bare)  # a CSS custom property
+        else:
+            segs = [x for x in re.split(r"[.\[\]'\"\s/()]+", c) if x]  # getColor('on-primary') -> on-primary
+            if segs:
+                out.append(segs[-1])
+    out.append(key)
+    for c in codes:
+        words = [x for x in re.split(r"[.\[\]'\"\s/()-]+", c) if x]
+        if words:
+            out.append(words[-1])  # looser: only the last word
+    return [n for i, n in enumerate(out) if n and n not in out[:i]]
+
+
+@lru_cache(maxsize=65536)
+def _code_part(line):
+    """The line without a trailing // comment (quotes respected)."""
+    quote, k = None, 0
+    while k < len(line):
+        ch = line[k]
+        if quote:
+            if ch == "\\":
+                k += 1
+            elif ch == quote:
+                quote = None
+        elif ch in "'\"`":
+            quote = ch
+        elif line.startswith("//", k):
+            return line[:k]
+        k += 1
+    return line
+
+
+def _scan(line, col, depth, stop_at_comma):
+    """Read line[col:] until a ',' or ';' at depth 0 (when stop_at_comma), a bracket closing past depth 0,
+    a // comment or the line end. Returns (text, depth, stopped)."""
+    quote, k = None, col
+    while k < len(line):
+        ch = line[k]
+        if quote:
+            if ch == "\\":
+                k += 1
+            elif ch == quote:
+                quote = None
+        elif ch in "'\"`":
+            quote = ch
+        elif line.startswith("//", k):
+            return line[col:k], depth, False
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+            if depth < 0:
+                return line[col:k], depth, True
+        elif ch in ",;" and depth == 0 and stop_at_comma:
+            return line[col:k], depth, True
+        k += 1
+    return line[col:], depth, False
+
+
+def _extend(lines, i, m, how="defined", max_lines=16):
+    """The definition matched by m on lines[i]: its key, then its value up to the next key (a ',' or ';' at
+    depth 0), the bracket that closes it, or a line end with nothing left open."""
+    key = lines[i][m.start():m.end()]
+    depth = 1 if key.rstrip().endswith("(") else 0
+    pieces, j, col = [], i, m.end()
+    while True:
+        text, depth, stopped = _scan(lines[j], col, depth, how == "defined")
+        pieces.append(text)
+        if stopped or depth <= 0 or j + 1 >= len(lines) or j - i >= max_lines:
+            break
+        j, col = j + 1, 0
+    value = "\n".join(pieces)
+    return _Look(key + value, value, how, i, j)
+
+
+def _src_line(lines, i):
+    """The src line itself (without comments), plus the rest of a bracket it opens."""
+    start = len(lines[i]) - len(lines[i].lstrip())
+    return _extend(lines, i, re.compile("").match(lines[i], start), how="line")
+
+
+def _definitions(lines, idxs, names, nearest=None):
+    """The definition of the most specific of `names` among lines[idxs], as a Look. With `nearest` (a line
+    index), only the definition closest to it; without, every definition, joined."""
+    idxs = list(idxs)
+    for n in names:
+        rx = _defn(n)
+        found = []
+        for i in idxs:
+            m = rx.search(_code_part(lines[i]))
+            if m:
+                found.append(_extend(lines, i, m))
+        if not found:
+            continue
+        if nearest is None:
+            return _Look.join(found)
+
+        def dist(f):
+            return 0 if f.first <= nearest <= f.last else min(abs(f.first - nearest), abs(f.last - nearest))
+        return min(found, key=lambda f: (dist(f), f.first))
+    return None
+
+
+def _direct_values(text, names):
+    """Numbers written right after a definition of one of `names` (`md: 12`, `case .body: return 17`)."""
+    out = []
+    for n in names:
+        for m in re.finditer(_key_rx(n) + rf"\s*(?:return\s+)?['\"]?\s*({_NUM})(?![xX\d])", text, re.I):
+            out.append(float(m.group(1)))
+    return out
+
+
+def _label_rx(labels):
+    return rf"(?<![\w$-])['\"]?(?:{'|'.join(labels)})['\"]?\s*(?:[:=(]|->)"
+
+
+def _has_label(text, labels) -> bool:
+    return re.search(_label_rx(labels), text, re.I) is not None
+
+
+def _labelled(text, labels):
+    """Numbers written right after one of `labels` (regex pieces): `x: 0`, `radius = 8`, `.opacity(0.2)`,
+    `"blur": "8px"`, `shadowRadius: CGFloat(8)`, XML `name="android:textSize">17sp`."""
+    alt = "|".join(labels)
+    vals = [float(m.group(1)) for m in re.finditer(
+        _label_rx(labels) + rf"\s*\(?\s*(?:(?:CGFloat|Double|Float|Int)\(\s*)?['\"]?\s*({_NUM})(?![xX\d])", text, re.I)]
+    vals += [float(m.group(1)) for m in re.finditer(rf"name\s*=\s*['\"](?:android:)?(?:{alt})['\"]\s*>\s*({_NUM})", text, re.I)]
+    return vals
+
+
+# -- colours
+_HEX_PREFIXED = re.compile(r"(?:#|0x)([0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3})(?![0-9a-fA-F])")
+_HEX_QUOTED = re.compile(r"(?<=['\"])([0-9a-fA-F]{8}|[0-9a-fA-F]{6})(?=['\"])")  # Color(hex: "1F7A8C"), palette arrays, JSON
+_COMPONENT = re.compile(r"['\"]?\b(red|green|blue)['\"]?\s*[:=]\s*['\"]?(?:(?:CGFloat|Double|Float)\(\s*)?"
+                        r"(0x[0-9a-fA-F]{1,2}|\d*\.\d+|\d+)\s*\)?(\s*/\s*255(?:\.0+)?)?", re.I)
+_NAMED = re.compile(r"(?<![\w$-])(?:(?:UI|NS)?Colou?rs?\.|\.)?(black|white)(?![\w$-])(?!\s*:)", re.I)
+_GREY = re.compile(rf"(?<![\w$-])white\s*:\s*({_NUM})", re.I)  # UIColor(white: 0, alpha: 0.2)
+_CLEAR = re.compile(r"(?<![\w$-])(?:(?:UI|NS)?Colou?rs?\.|\.)?(clear|transparent)(?![\w$-])", re.I)
+
+
+def _hexes(text):
+    """Every hex colour as RRGGBB (and its alpha, 0-1 or None). 8 digits may be RRGGBBAA or AARRGGBB, so both."""
+    out = []
+    for rx in (_HEX_PREFIXED, _HEX_QUOTED):
+        for m in rx.finditer(text):
+            h = m.group(1).lower()
+            if len(h) == 3:
+                out.append(("".join(c * 2 for c in h), None))
+            elif len(h) == 6:
+                out.append((h, None))
+            else:
+                out += [(h[:6], int(h[6:], 16) / 255), (h[2:], int(h[:2], 16) / 255)]
+    return out
+
+
+def _component_values(cur):
+    """red/green/blue as 0-255. Hex and x/255 are already 0-255. A plain number at most 1 is a 0-1 value when
+    all three are at most 1 (SwiftUI Color(red: 1, green: 0, blue: 0)), when it has a decimal point, or when
+    another component is written as x/255 (UIColor(red: 0x33 / 255, green: 0x66 / 255, blue: 1)).
+    Otherwise it is 0-255 (a .colorset's "red": "59")."""
+    frac = any(o for _, o in cur.values())
+    plain = all(not o and not v.lower().startswith("0x") for v, o in cur.values())
+    unit = plain and all(float(v) <= 1.0 for v, _ in cur.values())
+    out = {}
+    for k, (v, o) in cur.items():
+        if v.lower().startswith("0x"):
+            out[k] = int(v, 16)
+        elif not o and float(v) <= 1.0 and (unit or frac or "." in v):
+            out[k] = float(v) * 255
+        else:
+            out[k] = float(v)
+    return out
+
+
+def _components(text):
+    """Every (r, g, b) written as named red/green/blue components."""
+    found, cur = [], {}
+    for m in _COMPONENT.finditer(text):
+        key = m.group(1).lower()
+        if key in cur:
+            cur = {}
+        cur[key] = (m.group(2), bool(m.group(3)))
+        if len(cur) == 3:
+            c = _component_values(cur)
+            found.append((c["red"], c["green"], c["blue"]))
+            cur = {}
+    return found
+
+
+def _named(text):
+    out = [(0, 0, 0) if m.group(1).lower() == "black" else (255, 255, 255) for m in _NAMED.finditer(text)]
+    for m in _GREY.finditer(text):
+        g = float(m.group(1))
+        g = g * 255 if g <= 1 else g
+        out.append((g, g, g))
+    return out
+
+
+def _has_color(text, rgba) -> bool:
+    want = to_hex(rgba)[1:]
+    if want in {h for h, _ in _hexes(text)}:
+        return True
+    r, g, b = rgba[:3]
+    if re.search(rf"(?<!\d){r}\D{{1,6}}{g}\D{{1,6}}{b}(?!\d)", text):
+        return True
+    # iOS .colorset JSON ("red" : "0x3B" / "0.231" / "59"), SwiftUI Color(red: 0.231, ...), UIColor(red: 59/255, ...),
+    # and named black / white
+    return any(all(abs(x - y) <= 1 for x, y in zip(c, (r, g, b))) for c in _components(text) + _named(text))
+
+
+def _colors_in(text) -> bool:
+    """Is any colour written here at all?"""
+    return bool(_hexes(text) or re.search(r"(?:rgba?|hsla?)\(", text, re.I) or _components(text) or _named(text) or _CLEAR.search(text))
+
+
+def _alphas_in(text):
+    vals = _labelled(text, ["alpha", "opacity", "shadowOpacity", "withAlphaComponent"])
+    for m in re.finditer(r"(?:rgba?|hsla?)\(([^)]*)\)", text, re.I):
+        parts = [p for p in re.split(r"[\s,/]+", m.group(1).strip()) if p]
+        if len(parts) >= 4:
+            try:
+                vals.append(float(parts[3][:-1]) / 100 if parts[3].endswith("%") else float(parts[3]))
+            except ValueError:
+                pass
+    vals += [a for _, a in _hexes(text) if a is not None]
+    if _CLEAR.search(text):
+        vals.append(0.0)
+    return vals
+
+
+def _alpha_test(text, a):
+    """True when an alpha written here matches; when none is written, True for an opaque colour, else None."""
+    vals = _alphas_in(text)
+    if vals:
+        return any(abs(v - a) <= 0.006 for v in vals)
+    return True if a >= 0.999 else None
+
+
+def _parse_or_none(c):
+    try:
+        return parse_color(c)
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+# -- shadows
+_SHADOW_LABELS = {
+    "x": ["x", "dx", "offset[-_]?x", "shadowOffsetX", "width"],
+    "y": ["y", "dy", "offset[-_]?y", "shadowOffsetY", "height"],
+    "blur": ["blur", "blurRadius", "blur[-_]radius", "shadowBlur"],
+    "radius": ["radius", "shadowRadius"],
+    "spread": ["spread", "spreadRadius", "spread[-_]radius"],
+    "elevation": ["elevation", "shadowElevation"],
+}
+_SHADOW_OTHER = ["opacity", "shadowOpacity", "color", "shadowColor", "shadowOffset", "offset"]
+_OFFSET_CALL = re.compile(rf"(?<![\w.])(?:Dp)?Offset\(\s*({_NUM})(?:\.dp|f|px)?\s*,\s*({_NUM})", re.I)
+_LENGTH = rf"{_NUM}(?:px|pt|dp|rem|em)?"
+
+
+def _css_shadow_lengths(text):
+    """The lengths of CSS-style shadows: '0 2px 8px 0 rgba(...)' -> [[0, 2, 8, 0]]."""
+    t = re.sub(r"(?:rgba?|hsla?|color-mix|var|calc)\([^)]*\)", " ", text, flags=re.I)
+    return [[float(x) for x in re.findall(_NUM, m.group(1))]
+            for m in re.finditer(rf"(?<![\w.#-])({_LENGTH}(?:\s+{_LENGTH}){{1,3}})(?![\w.%])", t)]
+
+
+def _shadow_number(text, field, n, has_radius):
+    """One shadow length, matched against its own label (x:, y:, radius:, blur, offsetX, shadowOffset's
+    width/height, shadowRadius…), else its place in a CSS shadow, never any number on the line."""
+    vals = _labelled(text, _SHADOW_LABELS[field])
+    if not vals and field in ("x", "y"):
+        vals = [float(m.group(1 if field == "x" else 2)) for m in _OFFSET_CALL.finditer(text)]
+    css = _css_shadow_lengths(text)
+    place = {"x": 0, "y": 1, "blur": 2, "spread": 3}.get(field)
+    if not vals and place is not None and css:
+        vals = [seq[place] if len(seq) > place else 0.0 for seq in css]
+    if not vals and field == "blur" and not has_radius:
+        radius = _labelled(text, _SHADOW_LABELS["radius"])  # React Native's shadowRadius is the CSS blur
+        if radius:
+            if any(_close(v, n) for v in radius):
+                return True
+            if any(_close(v * 2, n) for v in radius):
+                return f"the code writes radius {num(radius[0])}; give it as radius"
+            return False
+    if not vals and field == "radius":
+        vals = [v / 2 for v in (_labelled(text, _SHADOW_LABELS["blur"]) or [s[2] if len(s) > 2 else 0.0 for s in css])]
+    if vals:
+        return any(_close(v, n) for v in vals)
+    if n == 0 and field in ("x", "y", "blur", "spread"):
+        return True  # not written means 0
+    if css or _OFFSET_CALL.search(text) or any(_has_label(text, labels) for labels in list(_SHADOW_LABELS.values()) + [_SHADOW_OTHER]):
+        return None  # the code writes its shadow, but not this field
+    return _has_number(text, n)
+
+
+def _shadow_color(text, rgba, names):
+    if _has_color(text, rgba):
+        return True
+    if any(re.search(rf"(?<![\w$-]){re.escape(n)}(?![\w$-])", text) for n in names):
+        return True  # the colour token, by name
+    return False if _colors_in(text) else None
+
+
+# -- springs
+_SPRING_LABELS = {
+    "damping": ["damping"], "stiffness": ["stiffness"], "mass": ["mass"], "response": ["response"],
+    "dampingFraction": ["dampingFraction", "dampingRatio", "damping_ratio", "usingSpringWithDamping"],
+    "duration": ["duration", "withDuration"], "bounce": ["bounce", "extraBounce"],
+}
+
+
+def _spring_converted(text):
+    """The code's spring in the other form: stiffness and damping from response + dampingFraction (or
+    duration + bounce), and response + dampingFraction from stiffness + damping."""
+    def first(field):
+        vals = _labelled(text, _SPRING_LABELS[field])
+        return vals[0] if vals else None
+    mass = first("mass") or 1
+    response, frac, out = first("response"), first("dampingFraction"), {}
+    if response is not None or frac is not None:
+        response, frac = response if response is not None else 0.5, frac if frac is not None else 0.825
+    elif first("duration") is not None or first("bounce") is not None:
+        response, bounce = first("duration") or 0.5, first("bounce") or 0
+        frac = 1 - bounce if bounce >= 0 else (1 / (1 + bounce) if bounce > -1 else None)
+    if response and response > 0 and frac is not None:
+        out["stiffness"] = (2 * math.pi / response) ** 2 * mass
+        out["damping"] = 4 * math.pi * frac * mass / response
+    k, c = first("stiffness"), first("damping")
+    if k and k > 0 and mass > 0:
+        out["response"] = 2 * math.pi / math.sqrt(k / mass)
+        if c is not None:
+            out["dampingFraction"] = c / (2 * math.sqrt(k * mass))
+    return out
+
+
+def _spring_number(text, field, n):
+    vals = _labelled(text, _SPRING_LABELS[field])
+    if vals:
+        return any(_close(v, n) for v in vals)
+    if (field == "mass" and n == 1) or (field == "bounce" and n == 0):
+        return True  # the default
+    conv = _spring_converted(text).get(field)
+    if conv is not None:
+        return abs(conv - n) <= 0.01 * abs(n) + 0.005  # design.json may hold a rounded conversion
+    if any(_has_label(text, labels) for labels in _SPRING_LABELS.values()):
+        return None
+    return _has_number(text, n)
+
+
+# -- type
+_TYPE_LABELS = {
+    "size": ["font[-_]?size", "size", "ofSize", "pointSize", "textSize"],
+    "lineHeight": ["line[-_]?height", "minimumLineHeight", "maximumLineHeight"],
+    "lineHeightRatio": ["line[-_]?height", "height", "lineHeightMultiple", "lineHeightMultiplier", "lineSpacingMultiplier"],
+    "letterSpacing": ["letter[-_]?spacing", "tracking", "kerning", "kern"],
+}
+_FONT_SHORTHAND = re.compile(rf"(?<![\w.])({_NUM})(?:px|pt|sp|rem)\s*/\s*({_NUM})")  # CSS font: 600 17px/22px Inter
+
+
+def _type_number(look, field, n, names, strict):
+    """size / lineHeight / lineHeightRatio / letterSpacing against its own label. strict: drift when it is not
+    found (size); otherwise None when the code does not state it."""
+    t = look.text
+    vals = _labelled(t, _TYPE_LABELS[field])
+    if field in ("size", "lineHeight"):
+        vals += [float(m.group(1 if field == "size" else 2)) for m in _FONT_SHORTHAND.finditer(t)]
+    if not vals and names:
+        vals = _direct_values(t, names)
+    if vals:
+        return any(_close(v, n) for v in vals)
+    if _has_number(t, n) or (field == "letterSpacing" and n == 0):
+        return True
+    return False if strict else None
+
+
+_WEIGHT_NAMES = {"thin": {100, 200}, "hairline": {100}, "ultralight": {100, 200}, "extralight": {200}, "light": {300},
+                 "regular": {400}, "normal": {400}, "book": {400}, "medium": {500}, "semibold": {600}, "demibold": {600},
+                 "bold": {700}, "extrabold": {800}, "ultrabold": {800}, "heavy": {800, 900}, "black": {900}}
+_WEIGHT_LABEL = re.compile(r"(?<![\w$-])['\"]?(?:font[-_]?)?weight['\"]?\s*(?:[:=(]|->)\s*['\"]?\s*\.?(?:[A-Za-z]+\.)*"
+                           r"([A-Za-z]*[1-9]00|[A-Za-z]+(?:[-_][A-Za-z]+)?)", re.I)
+_WEIGHT_TYPE = re.compile(r"(?<![\w$])(?:Font)?Weight\.([A-Za-z]*[1-9]00|[A-Za-z]+)", re.I)  # Font.Weight.bold, FontWeight.W600
+_WEIGHT_WORD = re.compile(r"(?<![a-z])(thin|hairline|ultra[-_]?light|extra[-_]?light|light|regular|book|medium|semi[-_]?bold|"
+                          r"demi[-_]?bold|extra[-_]?bold|ultra[-_]?bold|bold|heavy|black)(?![a-z])", re.I)
+
+
+def _weight_of(word):
+    w = re.sub(r"[-_\s]", "", word).lower()
+    m = re.fullmatch(r"w?([1-9]00)", w)
+    return {int(m.group(1))} if m else _WEIGHT_NAMES.get(w)
+
+
+def _weights_in(look):
+    """Font weights written in a definition, as sets of numbers. Labelled ones first (fontWeight: '600',
+    weight: .semibold, Font.Weight.bold, .bold()); else weight words in font names (Inter_600SemiBold,
+    fontFamily.medium). 'light' and 'black' count in font names only, since they also name themes and colours."""
+    found = [w for rx in (_WEIGHT_LABEL, _WEIGHT_TYPE) for w in (_weight_of(m.group(1)) for m in rx.finditer(look.text)) if w]
+    if re.search(r"\.bold\(\s*\)", look.text):
+        found.append({700})
+    if found:
+        return found
+    quoted = " ".join(m.group(2) for m in re.finditer(r"(['\"])(.*?)\1", look.value))
+    outside = re.sub(r"(['\"]).*?\1", " ", look.value)
+    for text, skip in ((quoted, ()), (outside, ("light", "black"))):
+        for m in _WEIGHT_WORD.finditer(text):
+            word = re.sub(r"[-_]", "", m.group(1)).lower()
+            if word not in skip:
+                found.append(_WEIGHT_NAMES[word])
+    return found
+
+
+def _weight_test(look, want):
+    found = _weights_in(look)
+    if not found:
+        return None
+    return any(int(want) in s for s in found)

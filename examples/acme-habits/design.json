@@ -95,7 +95,8 @@
       "group": "Brand",
       "doc": "Buttons, progress, focus rings",
       "code": "theme.primary",
-      "src": "src/theme.ts:11, src/theme.ts:25"
+      "src": "src/theme.ts:11, src/theme.ts:25",
+      "on": ["bg", "surface"]
     },
     "onPrimary": {
       "value": {

@@ -24,31 +24,49 @@ design-canvas/
   design.json          you write this (spec/DESIGN_JSON.md, spec/design.schema.json)
   parts.css            the app's components as CSS, prefix p-
   guides/*.md          chapters (engine/markdown.py documents the syntax)
-  canvas/              pages, screens, partials, css (spec/CANVAS.md)
-  out/                 generated; don't edit
+  canvas/              screens.json, pages, screens, partials, css (spec/CANVAS.md)
+  refs/                real screenshots of the app, one per screen (optional)
+  assets/              the app's own images that screens show: logo, QR code (optional)
+  out/                 generated; don't edit or commit
 ```
+
+Add `design-canvas/out/` to the app's `.gitignore` (create it if there is none): `out/` is rebuilt from the other files.
 
 ## Steps
 
 1. **Find the design system.** Start from a few shared components and follow their imports to where colours, type, spacing, radii, shadows, motion and icons are defined. Common homes: `theme.ts`, `tokens/*`, `tailwind.config.*`, CSS custom properties, a theme provider, a UI package in `node_modules`, `Colors.xcassets`, Android `colors.xml`/`themes.xml`, Flutter `ThemeData`. Note each value's file and line.
    - When a value is computed (a generated dark theme, a scale function), work it out and mark the token `derived` with a one-line explanation. Never guess a value.
    - When the design system lives in a dependency, read it there (read-only) and point `src` at the app's own import if the dependency's file isn't in the repo.
-2. **Write `design.json`.** Follow `spec/DESIGN_JSON.md`. Give every token a `src` (`path:line` from the app root) and, where the code has one, its `doc` comment and `code` name. Map the standard `roles`. Then run:
+2. **Write `design.json`.** Follow `spec/DESIGN_JSON.md`. Give every token a `src` (`path:line` from the app root) and, where the code has one, its `doc` comment and `code` name. Map the standard `roles`. When a text colour sits on a fill (a button label, initials on an avatar), set its `on` to that fill so contrast is checked on the real pair. Then run:
    ```
    python3 <skill>/engine/build.py design-canvas --validate
    python3 <skill>/engine/build.py design-canvas --check
    ```
    Fix every error, every drift line and every "NO SRC" line before going on. `--check` passes only when every token is either found where its `src` says it is defined, or marked `derived`.
-3. **Icons.** List only the icons the app registers or imports. Copy each icon's inner SVG shapes from the package or file it really comes from, and record `source`. Keep the icon set's licence in mind; note it in the guide if it needs attribution.
+   - `derived` is only for values the code computes. It is never a way to silence drift: fix the `src` line, the `code` name or the value instead.
+   - If light and dark come from two constants, give `code` and `src` one entry per theme.
+   - `--check` prints the derived share. CI can cap it with `--max-derived 10`. Treat "not checked" and "could be checked" lines as work left to do.
+3. **Icons.** List only the icons the app registers or imports.
+   - Icons that come as files or a package (Lucide, Material Icons, the app's own SVGs): copy each icon's inner SVG shapes from where it really comes from, and record `source`. Keep the set's licence in mind; note it in the guide if it needs attribution.
+   - Icons the operating system draws (SF Symbols, Material Symbols): never copy or redraw their artwork. List each with `system` and `name` (spec/DESIGN_JSON.md); screens show a labelled placeholder.
 4. **Write `parts.css`.** One class family per shared component, written from the component's code (sizes, variants, states), using only token variables (`var(--c-*)`, `var(--t-*)`, `var(--s-*)`, `var(--r-*)`, `var(--sh-*)`, `var(--role-*)`).
-5. **Write the chapters** in `guides/`: `00-start.md`, `01-tokens.md` (use the `::: tokens` views), then one chapter per component level that exists (`atoms`, `molecules`, `organisms`, …). Each component gets a `### Name [level]` card with a specimen drawn with `parts.css`, its props/variants table, and `::: lineage Name` if `components.importFrom` is set.
-6. **Draw the screens** in `canvas/` following `spec/CANVAS.md`: read each screen's code, copy its strings, draw its default state and each state that looks different. Give every element a designer might comment on a stable `data-dc` id, and keep the id when you redraw the screen.
+5. **Write the chapters** in `guides/`: `00-start.md`, `01-tokens.md` (use the `::: tokens` views), then one chapter per component level that exists (`atoms`, `molecules`, `organisms`, …). Each component gets a `### Name [level]` card with a specimen drawn with `parts.css`, its props/variants table, and `::: lineage Name` if `components.importFrom` is set. A specimen can reuse a canvas partial: `{{> name key=value}}`.
+6. **Draw the screens** in `canvas/` following `spec/CANVAS.md`.
+   - **List them all first.** From the app's navigation, routes, tab bars and view files, write every screen and every state that looks different into `canvas/screens.json`.
+   - **Get real screenshots** when you can: run the app (simulator, emulator, browser, a preview or demo mode) and capture each screen, or collect the repo's store screenshots. Use test accounts and made-up data. Save them in `refs/` and set `reference` on each frame.
+   - **Draw** every listed screen, or as many as the user asked for: read its code, copy its strings, draw its default state and each state that looks different. With many screens, draw the main flows first. Never stop silently at a few: the build prints `canvas: N of M screens drawn`, the rest stay listed, and you tell the user what is left.
+   - Give every element a designer might comment on a stable `data-dc` id, and keep the id when you redraw the screen. Show the app's own images (logo, QR code) with `{{asset:…}}`.
+   - **Compare** each screen with its screenshot on the canvas (Overlay), or render it with `python3 <skill>/engine/build.py design-canvas --shoot <screen-id>` and compare the two images. Fix sizes and positions until they match. When the build says a screen "may be out of date", redraw it from its changed source.
 7. **Build and look.**
    ```
    python3 <skill>/engine/build.py design-canvas
    ```
-   Open `out/guide.html` and `out/canvas.html` in a browser. Check every theme, every specimen and every screen against the code (or a screenshot of the real app when you have one). The build prints missing specimens, screens, contrast issues and drift; fix them.
-   **No browser?** Rely on the build output and `--validate --json` (missing screens, specimens, contrast and drift), and ask the user to open the two pages and tell you what looks wrong.
+   Open `out/guide.html` and `out/canvas.html` in a browser. Check every theme, every specimen and every screen against the code (or a screenshot of the real app when you have one). Then deal with every line the build prints:
+   - `warning:` a colour with no value for a theme, or a `var(--…)` that design.json doesn't define (with its file, line and the closest real name).
+   - `missing:` a specimen, partial or screen file.
+   - `CONTRAST:` a text colour under 4.5:1 on the colour it is read on. If that is the wrong pair, set `on` (or `"text": false`). If it is right, the app really has low contrast: keep the value and say so in the guide.
+
+   **No browser?** Rely on `build.py design-canvas --json` (`warnings`, `missing`, `contrastIssues`, `drift`), and ask the user to open the two pages and tell you what looks wrong.
 
 ## Apply a designer's review
 
@@ -82,5 +100,5 @@ Designers inspect and comment on `out/canvas.html`, and their reviews arrive thr
 
 ## Limits
 
-- The drift check understands JS/TS theme objects, Tailwind configs, CSS custom properties, iOS `.colorset` files, SwiftUI/UIKit colours and numbers, Android XML resources, and Flutter/Compose `Color(0x…)`. For anything else it searches near the `src` line, which is looser. Say so in the guide when the app uses another format.
+- The drift check understands JS/TS theme objects, Tailwind configs, CSS custom properties, iOS `.colorset` files, SwiftUI/UIKit colours and numbers, Android XML resources, and Flutter/Compose `Color(0x…)`. For anything else it checks the `src` line itself, then the nearest definition of the name within 8 lines. Say so in the guide when the app uses another format.
 - "Used in" lists only read JavaScript/TypeScript imports.

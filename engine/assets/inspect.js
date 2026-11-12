@@ -131,7 +131,7 @@
     return Object.entries(D.type || {}).filter(([, t]) => t.size === size && (isNaN(lh) || Math.abs(t.lh - lh) < 0.6)).map(([k, t]) => ({ name: `type.${k}`, weightDiff: String(t.weight) !== String(cs.fontWeight) }))
   }
   const themeOf = (el) => el.closest('[data-theme]')?.dataset.theme || D.defaultTheme
-  const describeEl = (n) => n.tagName.toLowerCase() + (n.dataset?.dc ? `[data-dc=${n.dataset.dc}]` : '') + [...n.classList].slice(0, 3).map((c) => '.' + c).join('')
+  const describeEl = (n) => n.tagName.toLowerCase() + (n.dataset?.dc ? `[data-dc=${n.dataset.dc}]` : '') + (n.dataset?.icon ? `[icon=${n.dataset.icon}]` : '') + [...n.classList].slice(0, 3).map((c) => '.' + c).join('')
   function componentOf(el) {
     for (let n = el; n && !n.classList.contains('sc'); n = n.parentElement) {
       const c = [...n.classList].find((x) => x.startsWith('p-'))
@@ -223,7 +223,30 @@
     return { fig, dev, el, box: a.box }
   }
 
-  function pickable(t) {
+  // Decoration: an aria-hidden layer (a vignette, grain, glow…) or anything inside one. Icons are aria-hidden too, but pickable.
+  function isDecor(n, sc) {
+    for (; n && n !== sc; n = n.parentElement) if (n.getAttribute('aria-hidden') === 'true' && !n.classList.contains('ic')) return true
+    return false
+  }
+  const inScreen = (n, sc) => { const d = n.closest('[data-dc]'); return !!d && sc.contains(d) }
+  // The element to inspect. With a point (x, y), look through every layer under it: skip decoration, and when the top
+  // layer is a bare overlay with no data-dc, prefer the element under it that has (or sits inside) a data-dc id.
+  function pickable(t, x, y) {
+    if (x != null && y != null && document.elementsFromPoint) {
+      const stack = []
+      for (let n of document.elementsFromPoint(x, y)) {
+        if (n.closest('.dc-ui, .dc-pin, .cv-ref')) { if (!stack.length) return null; continue }
+        if (n.closest('svg') && n.closest('svg') !== n) n = n.closest('svg')
+        const sc = n.closest('.dev .sc')
+        if (!sc || n === sc || stack.includes(n) || (stack.length && !stack[0].closest('.dev .sc').contains(n))) continue
+        if (!isDecor(n, sc)) stack.push(n)
+      }
+      const top = stack[0]
+      if (!top) return null
+      const sc = top.closest('.dev .sc')
+      if (inScreen(top, sc)) return top
+      return stack.find((n) => !top.contains(n) && inScreen(n, sc)) || top
+    }
     if (!t || t.closest('.dc-ui, .dc-pin')) return null
     if (t.closest('svg') && t.closest('svg') !== t) t = t.closest('svg')
     const sc = t.closest('.dev .sc')

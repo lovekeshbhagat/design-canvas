@@ -1,0 +1,10 @@
+{
+  "screens": [
+    { "id": "today", "name": "Today", "source": "src/screens/TodayScreen.tsx", "page": "today" },
+    { "id": "today-done", "name": "Today", "state": "All done", "source": "src/screens/TodayScreen.tsx", "page": "today" },
+    { "id": "today-empty", "name": "Today", "state": "Empty", "source": "src/screens/TodayScreen.tsx", "page": "today" },
+    { "id": "add-habit", "name": "Add a habit", "state": "Sheet open", "source": "src/screens/AddHabitSheet.tsx", "page": "today" },
+    { "id": "stats", "name": "Stats", "source": "src/screens/StatsScreen.tsx", "page": "stats" },
+    { "id": "stats-dark", "name": "Stats", "state": "Dark theme", "source": "src/screens/StatsScreen.tsx", "page": "stats" }
+  ]
+}

@@ -8,9 +8,16 @@
 .dev.tall { height: auto !important; }
 .dev > .sc { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
 
-/* phone: 47 pt status bar, island, home indicator */
-.dev-phone { border-radius: 54px; box-shadow: 0 0 0 9px #141414, 0 0 0 10px #2c2c2c, 0 40px 90px rgba(0, 0, 0, 0.55); }
-.dev-sb { height: 47px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 8px 30px 0 36px; font: 600 16px/1 -apple-system, 'SF Pro Text', system-ui, sans-serif; letter-spacing: -0.2px; position: relative; z-index: 30; }
+/* phone: island, home indicator, and a 47 px status bar drawn OVER the top of the screen.
+   The screen runs under the status bar; its content starts 47 px down (the safe area, --safe-top). */
+.dev-phone { --safe-top: 47px; border-radius: 54px; box-shadow: 0 0 0 9px #141414, 0 0 0 10px #2c2c2c, 0 40px 90px rgba(0, 0, 0, 0.55); }
+.dev-phone > .sc { padding-top: var(--safe-top); }
+.dev-sb { position: absolute; top: 0; left: 0; right: 0; height: var(--safe-top); box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; padding: 8px 30px 0 36px; font: 600 16px/1 -apple-system, 'SF Pro Text', system-ui, sans-serif; letter-spacing: -0.2px; z-index: 30; }
+.dev[data-statusbar="light"] .dev-sb, .dev[data-statusbar="light"] .dev-home { color: #fff; }
+/* backgrounds that run up under the status bar: the first sc-body, and any element with sc-bleed.
+   The transparent border keeps their content below the bar (a background paints under its border). */
+.dev-phone > .sc > .sc-body:first-child, .dev-phone .sc-under > .sc-body:first-child, .dev-phone .sc-bleed { margin-top: calc(-1 * var(--safe-top)); border-top: var(--safe-top) solid transparent; }
+.dev-phone .sc-under, .dev-phone .sc-modal { padding-top: var(--safe-top); box-sizing: border-box; }
 .dev-sb svg { height: 12px; fill: currentColor; }
 .dev-sb .r { display: flex; gap: 6px; align-items: center; }
 .dev-island { position: absolute; top: 11px; left: 50%; width: 124px; height: 35px; margin-left: -62px; border-radius: 20px; background: #000; z-index: 31; }

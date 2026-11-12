@@ -195,7 +195,7 @@ class Sample(unittest.TestCase):
             self.assertNotIn("missing frames", (out / "canvas.html").read_text(encoding="utf-8"))
             guide = (out / "guide.html").read_text(encoding="utf-8")
             self.assertIn('<a class="cta" href="canvas.html">', guide)
-            self.assertIn("See all 5 screens on the canvas", guide)
+            self.assertIn("See 5 of 6 screens on the canvas", guide)  # canvas/screens.json lists one more than is drawn
             self.assertNotIn("{{", guide)
         finally:
             shutil.rmtree(out)

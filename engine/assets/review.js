@@ -414,7 +414,7 @@
     }
     cancelAnimationFrame(raf)
     raf = requestAnimationFrame(() => {
-      const el = I.pickable(document.elementFromPoint(e.clientX, e.clientY))
+      const el = I.pickable(document.elementFromPoint(e.clientX, e.clientY), e.clientX, e.clientY)
       if (!el) {
         hover.hidden = true
         return
@@ -681,7 +681,7 @@
   // ---------- wiring ----------
   btnInspect.addEventListener('click', () => setInspect(!C.inspecting()))
   btnComments.addEventListener('click', () => (drawer.hidden || tab !== 'comments' ? openDrawer('comments') : closeDrawer()))
-  addEventListener('dc:pick', (e) => select(I.pickable(e.detail.target)))
+  addEventListener('dc:pick', (e) => select(I.pickable(e.detail.target, e.detail.x, e.detail.y)))
   addEventListener('dc:pin', (e) => {
     const c = all().find((x) => x.id === e.detail.id)
     if (!c) return

@@ -8,14 +8,17 @@
   const schemes = window.DG_SCHEMES || {}
   const root = document.documentElement
   const buttons = [...document.querySelectorAll('[data-set-theme]')]
+  const menu = document.querySelector('[data-theme-select]') // many themes: a menu instead of buttons
   function setTheme(id) {
     if (!(id in schemes)) return
     root.dataset.theme = id
     root.dataset.scheme = schemes[id]
     buttons.forEach((b) => b.classList.toggle('on', b.dataset.setTheme === id))
+    if (menu) menu.value = id
     store.set('design-canvas.theme', id)
   }
   buttons.forEach((b) => b.addEventListener('click', () => setTheme(b.dataset.setTheme)))
+  menu?.addEventListener('change', () => setTheme(menu.value))
   setTheme(store.get('design-canvas.theme') || root.dataset.theme)
 
   // Highlight the chapter in view.

@@ -6,7 +6,7 @@ group: Foundations
 
 ## Colour
 
-Two themes, light and dark. Each swatch follows the theme picked in the sidebar; the dots in the corner show the value in every theme. Contrast is measured against the background of each theme.
+Two themes, light and dark. Each swatch follows the theme picked in the sidebar; the dots in the corner show the value in every theme. Colours used for text show their contrast on the colour they are read on. `primary` is also the text of ghost buttons, so it is checked on `bg` and `surface`.
 
 ::: tokens colors
 

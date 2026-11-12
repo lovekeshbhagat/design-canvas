@@ -11,6 +11,10 @@ bold/italic) plus three blocks:
 
 In "parts" chapters every `### Name [level]` heading opens a part card: the
 specimens go on the left, the rest of the section on the right.
+
+Specimens and HTML lines can use the canvas shortcuts: `{{icon:name}}` and
+`{{> partial key=value}}` (a file in canvas/partials/). A partial in a code
+sample or a sentence stays as text.
 """
 
 from __future__ import annotations
@@ -213,7 +217,7 @@ class Doc:
                 emit(render_list(items))
                 i = j
                 continue
-            if ln.lstrip().startswith("<"):
+            if ln.lstrip().startswith(("<", "{{>")):
                 j, buf = i, []
                 while j < len(lines) and lines[j].strip():
                     buf.append(lines[j])

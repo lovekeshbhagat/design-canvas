@@ -37,6 +37,14 @@ button { font: inherit; color: inherit; }
 .frames button b { font: 500 13px/1.25 var(--ui); color: var(--k-fg); }
 .frames button span { font: 400 11.5px/1.25 var(--ui); color: var(--k-muted); }
 .frames button[hidden] { display: none; }
+.todo { border-top: 1px solid var(--k-line); padding: 10px 8px 8px; max-height: 34vh; overflow-y: auto; flex: none; }
+.todo summary { cursor: pointer; padding: 4px 10px 8px; font: 600 12.5px/1.3 var(--ui); color: #f2b544; }
+.todo .grp { font: 600 11px/1.2 var(--ui); color: var(--k-muted); padding: 8px 10px 2px; letter-spacing: 0.04em; }
+.todo ul { list-style: none; margin: 0; padding: 0; }
+.todo li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; padding: 6px 10px; border-radius: 8px; }
+.todo li b { font: 500 13px/1.25 var(--ui); color: var(--k-fg); }
+.todo li span { font: 400 11.5px/1.25 var(--ui); color: var(--k-muted); }
+.todo li code { flex-basis: 100%; font: 400 11px/1.3 var(--mono); color: var(--k-muted); overflow-wrap: anywhere; }
 .side-foot { border-top: 1px solid var(--k-line); padding: 10px 16px 14px; font: 400 11.5px/1.45 var(--ui); color: var(--k-muted); }
 .side-foot kbd { font: 500 10.5px/1 var(--mono); border: 1px solid var(--k-line); border-radius: 4px; padding: 2px 4px; color: var(--k-fg-2); }
 
@@ -64,11 +72,33 @@ button { font: inherit; color: inherit; }
 .cv-label code { font: 400 13px/1.3 var(--mono); color: var(--k-muted); overflow-wrap: anywhere; }
 .cv-frame .note { font: 400 15px/1.45 var(--ui); color: var(--k-muted); margin: 0; }
 .cv-frame.sel .dev { outline: 4px solid var(--k-accent); outline-offset: 14px; }
-.dev, .dev * { pointer-events: none; user-select: none; }
+/* screens are pictures: no pointer events (zero specificity, so a frame's own pointer-events rules still count) */
+:where(.dev, .dev *) { pointer-events: none; }
+.dev, .dev * { user-select: none; }
 .cv-links { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
 .cv-links path { fill: none; stroke: var(--k-accent); stroke-width: 3; opacity: 0.6; }
 .cv-links path.x { stroke-dasharray: 10 10; }
 .cv-links text { fill: var(--k-fg-2); font: 600 16px var(--ui); }
+.cv-head .cv-todo { font: 500 17px/1.45 var(--ui); color: #f2b544; margin-top: 4px; }
+.cv-label .cv-stale { display: inline-flex; align-self: flex-start; font: 600 12px/1 var(--ui); letter-spacing: 0.04em; border-radius: 99px; padding: 6px 10px; color: #3a2600; background: #f2b544; }
+
+/* ---------- compare with a screenshot of the app (frame `reference`) ---------- */
+.cv-ref { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 4px; margin-top: 4px; cursor: default; }
+.cv-ref-modes { display: inline-flex; gap: 2px; padding: 3px; background: var(--k-panel); border: 1px solid var(--k-line); border-radius: 99px; }
+.cv-ref button { border: 0; background: none; border-radius: 99px; padding: 8px 13px; font: 600 14px/1 var(--ui); color: var(--k-fg-2); cursor: pointer; white-space: nowrap; }
+.cv-ref button:hover { background: var(--k-panel-2); color: var(--k-fg); }
+.cv-ref button[aria-pressed="true"] { background: var(--k-accent); color: var(--k-on-accent); }
+.cv-ref input { width: 130px; margin: 0 10px; accent-color: var(--k-accent); cursor: pointer; }
+.cv-ref input[hidden] { display: none; }
+.cv-frame[data-ref="side"] { width: auto !important; }
+.cv-pair { display: flex; gap: 56px; align-items: flex-start; }
+.cv-ref-side { margin: 0; display: flex; flex-direction: column; gap: 14px; flex: none; }
+.cv-ref-side[hidden] { display: none; }
+.cv-ref-side img { display: block; height: auto; background: var(--k-panel); box-shadow: 0 0 0 1px var(--k-line), 0 30px 70px rgba(0, 0, 0, 0.45); }
+.cv-ref-side figcaption { font: 500 14px/1.3 var(--mono); color: var(--k-muted); overflow-wrap: anywhere; }
+.dev .cv-ref-over { position: absolute; left: 0; top: 0; width: 100%; height: auto; z-index: 45; }
+.dev .cv-ref-over[hidden] { display: none; }
+
 .missing { flex: 1; display: grid; place-items: center; color: #ffb02e; font: 500 14px var(--mono); padding: 20px; text-align: center; }
 
 /* ---------- zoom controls ---------- */

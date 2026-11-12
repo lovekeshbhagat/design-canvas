@@ -59,8 +59,10 @@ TOOLS = [
     tool("design_canvas_validate", "Validate", "Check design.json and the canvas files. Problems are reported in the result, not as errors.",
          {"dir": DIR}),
     tool("design_canvas_check", "Drift check",
-         "Compare every token in design.json with the code its `src` points at. ok:false lists drifted tokens and tokens without a src.",
-         {"dir": DIR}),
+         "Compare every token in design.json with the code its `src` points at. ok:false lists drifted tokens and tokens without a src. "
+         "derivedShare is the share of tokens marked derived (not checked); notChecked lists fields the code does not state.",
+         {"dir": DIR, "maxDerived": {"type": "number", "minimum": 0, "maximum": 100,
+                                     "description": "Also fail (ok:false) when more than this percent of tokens are marked derived."}}),
     tool("design_canvas_build", "Build", "Write out/guide.html, out/canvas.html and the token files in the design folder.",
          {"dir": DIR, "noWebFonts": {"type": "boolean", "default": False, "description": "Don't load fonts from Google Fonts."}},
          annotations=WRITES),
@@ -182,7 +184,10 @@ def call_tool(name: str, args) -> dict:
     if name == "design_canvas_validate":
         data = run(d, ["--validate"])
     elif name == "design_canvas_check":
-        data = run(d, ["--check"])
+        cap = args.get("maxDerived")
+        if cap is not None and (isinstance(cap, bool) or not isinstance(cap, (int, float)) or not 0 <= cap <= 100):
+            raise InputError("maxDerived must be a number from 0 to 100")
+        data = run(d, ["--check"] + (["--max-derived", str(cap)] if cap is not None else []))
     elif name == "design_canvas_build":
         data = run(d, ["--no-web-fonts"] if args.get("noWebFonts") is True else [])
     elif name == "design_canvas_reviews":

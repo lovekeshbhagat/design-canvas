@@ -9,8 +9,9 @@ An agent skill (Agent Skills format: `SKILL.md`) plus a small engine. An agent r
 | Path | What it is |
 | --- | --- |
 | `SKILL.md` | The steps an agent follows to use the skill. Keep it under ~150 lines. |
-| `engine/build.py` | CLI: build, `--check`, `--validate`, `--reviews`, `--resolve`, `--json`. |
+| `engine/build.py` | CLI: build, `--check`, `--validate`, `--reviews`, `--resolve`, `--shoot`, `--json`. |
 | `engine/tokens.py` | design.json loading, CSS variables, DTCG tokens, contrast, drift check. |
+| `engine/screens.py` | The screen list and coverage, reference screenshots, `{{asset:…}}` images, the "may be out of date" check (git) and headless Chrome for `--shoot`. |
 | `engine/reviews.py` | Review files (one per person): validation, merging, deletes, the fenced report, resolving. Untrusted input. |
 | `engine/serve.py` | The local review helper (`--serve`): 127.0.0.1 only, token + Host + Origin checks, commits only the reviewer's own file. |
 | `engine/mcp_server.py` | stdio MCP server; runs `build.py --json` in a subprocess. |

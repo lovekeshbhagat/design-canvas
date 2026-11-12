@@ -69,7 +69,21 @@
           {
             "allOf": [
               { "$ref": "#/$defs/meta" },
-              { "type": "object", "required": ["value"], "properties": { "value": { "$ref": "#/$defs/colorValue" } } }
+              {
+                "type": "object",
+                "required": ["value"],
+                "properties": {
+                  "value": { "$ref": "#/$defs/colorValue" },
+                  "on": {
+                    "description": "The colour token(s) this colour is read on, for the contrast check: a name, a list of names, or one of those per theme id.",
+                    "oneOf": [
+                      { "$ref": "#/$defs/tokenNames" },
+                      { "type": "object", "minProperties": 1, "additionalProperties": { "$ref": "#/$defs/tokenNames" } }
+                    ]
+                  },
+                  "text": { "type": "boolean", "description": "true: check this colour's contrast as text; false: never. Only needed when the name and roles get it wrong." }
+                }
+              }
             ]
           }
         ]
@@ -86,9 +100,10 @@
           "style": { "enum": ["normal", "italic"] },
           "load": { "enum": ["google", "url", "system"] },
           "url": { "type": "string" },
-          "code": { "type": "string" },
+          "code": { "$ref": "#/$defs/codeName" },
           "doc": { "type": "string" },
-          "src": { "type": "string" }
+          "src": { "$ref": "#/$defs/srcLine" },
+          "derived": { "type": "string" }
         }
       }
     },
@@ -103,8 +118,8 @@
             "properties": {
               "font": { "type": "string", "description": "A key in fonts." },
               "size": { "type": "number" },
-              "lineHeight": { "type": "number", "description": "px" },
-              "lineHeightRatio": { "type": "number" },
+              "lineHeight": { "type": "number", "description": "px. Leave out (with lineHeightRatio) when the code sets none: the platform default is used." },
+              "lineHeightRatio": { "type": "number", "description": "Only when the code gives the line height as a multiple of the size." },
               "letterSpacing": { "type": "number", "description": "px" },
               "textTransform": { "enum": ["none", "uppercase", "lowercase", "capitalize"] },
               "sample": { "type": "string" }
@@ -126,6 +141,7 @@
               "x": { "type": "number" },
               "y": { "type": "number" },
               "blur": { "type": "number" },
+              "radius": { "type": "number", "description": "For code that writes a shadow radius (SwiftUI, UIKit): about half the CSS blur. When blur is left out, blur = 2 x radius." },
               "spread": { "type": "number" },
               "color": { "type": "string" },
               "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
@@ -139,7 +155,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "durations": { "$ref": "#/$defs/numberTokens" },
+        "durations": { "$ref": "#/$defs/numberTokens", "description": "Milliseconds. The drift check also accepts the value in seconds (value / 1000) in the code." },
         "easings": {
           "type": "object",
           "additionalProperties": {
@@ -156,7 +172,15 @@
               { "$ref": "#/$defs/meta" },
               {
                 "type": "object",
-                "properties": { "damping": { "type": "number" }, "stiffness": { "type": "number" }, "mass": { "type": "number" } }
+                "properties": {
+                  "damping": { "type": "number" },
+                  "stiffness": { "type": "number" },
+                  "mass": { "type": "number", "description": "Default 1." },
+                  "response": { "type": "number", "exclusiveMinimum": 0, "description": "SwiftUI .spring(response:dampingFraction:), seconds. stiffness = (2pi / response)^2 x mass." },
+                  "dampingFraction": { "type": "number", "minimum": 0, "description": "SwiftUI. damping = 4pi x dampingFraction x mass / response." },
+                  "duration": { "type": "number", "exclusiveMinimum": 0, "description": "SwiftUI .spring(duration:bounce:), seconds. Used as response." },
+                  "bounce": { "type": "number", "exclusiveMinimum": -1, "maximum": 1, "description": "SwiftUI. dampingFraction = 1 - bounce (or 1 / (1 + bounce) below 0)." }
+                }
               }
             ]
           }
@@ -176,10 +200,12 @@
           "type": "object",
           "additionalProperties": {
             "type": "object",
-            "required": ["svg"],
+            "anyOf": [{ "required": ["svg"] }, { "required": ["system"] }],
             "additionalProperties": false,
             "properties": {
               "svg": { "type": "string" },
+              "system": { "type": "string", "description": "An operating-system icon set (sf-symbols, material-symbols…). Drawn as a labelled placeholder instead of svg." },
+              "name": { "type": "string", "description": "With system: the symbol's name, if it differs from the item key." },
               "source": { "type": "string" },
               "style": { "enum": ["stroke", "fill"] },
               "strokeWidth": { "type": "number" },
@@ -200,6 +226,12 @@
     }
   },
   "$defs": {
+    "tokenNames": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+      ]
+    },
     "hexOrRgba": { "type": "string", "pattern": "^(#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})|rgba?\\(.*\\)|transparent)$" },
     "colorValue": {
       "oneOf": [
@@ -212,10 +244,24 @@
       "properties": {
         "doc": { "type": "string" },
         "group": { "type": "string" },
-        "code": { "type": "string" },
-        "src": { "type": "string", "description": "path/from/app/root:line" },
-        "derived": { "type": "string", "description": "How the value is computed, when it is not written literally in the code." }
+        "code": { "$ref": "#/$defs/codeName" },
+        "src": { "$ref": "#/$defs/srcLine" },
+        "derived": { "type": "string", "description": "How the value is computed, when the code computes it instead of writing it. Never a way to silence drift." }
       }
+    },
+    "codeName": {
+      "description": "How the code refers to the token, or one name per theme id: {\"light\": \"Palette.sand\", \"dark\": \"Palette.slate\"}.",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "object", "minProperties": 1, "additionalProperties": { "type": "string" } }
+      ]
+    },
+    "srcLine": {
+      "description": "path/from/app/root:line (several, comma-separated), or one per theme id.",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "object", "minProperties": 1, "additionalProperties": { "type": "string" } }
+      ]
     },
     "numberTokens": {
       "type": "object",

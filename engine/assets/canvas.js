@@ -52,8 +52,8 @@
       bh = board.clientHeight
     const w = el.offsetWidth,
       h = el.offsetHeight
-    // fit the width of the page, but never so small the first row is unreadable
-    const k = clamp(Math.min(bw / w, Math.max(bh / h, (bw / w) * 0.9)) * 0.96)
+    // fit the width of the page, but never so small the first row is unreadable, and never above 100%
+    const k = clamp(Math.min(1, Math.min(bw / w, Math.max(bh / h, (bw / w) * 0.9)) * 0.96))
     view.k = k
     view.x = (bw - w * k) / 2
     view.y = Math.max(16, (bh - h * k) / 2)
@@ -102,7 +102,9 @@
     svg.setAttribute('height', el.offsetHeight)
     const base = rectInWorld(el)
     const phoneRect = (id) => {
-      const f = el.querySelector(`.cv-frame[data-id="${id}"] .dev`)
+      // the screen, or the screen and its screenshot when they are shown side by side
+      const fig = el.querySelector(`.cv-frame[data-id="${id}"]`)
+      const f = fig?.dataset.ref === 'side' ? fig.querySelector('.cv-pair') : fig?.querySelector('.dev')
       if (!f) return null
       const r = rectInWorld(f)
       return { x: r.x - base.x, y: r.y - base.y, w: r.w, h: r.h }
@@ -175,6 +177,55 @@
     el.prepend(svg)
   }
 
+  // ---------- compare a screen with a screenshot of the app (frame `reference`) ----------
+  const refs = data.refs || {}
+  function setRef(fig, mode) {
+    const ref = refs[fig.dataset.id]
+    const dev = fig.querySelector('.dev')
+    if (!ref || !dev) return
+    fig.dataset.ref = mode
+    let side = fig.querySelector('.cv-ref-side')
+    let over = dev.querySelector('.cv-ref-over')
+    if (mode === 'side' && !side) {
+      side = document.createElement('figure')
+      side.className = 'cv-ref-side'
+      const img = new Image()
+      img.src = ref.src
+      img.alt = 'Screenshot of the app'
+      img.style.width = `${dev.offsetWidth}px`
+      img.style.borderRadius = getComputedStyle(dev).borderRadius
+      const cap = document.createElement('figcaption')
+      cap.textContent = `Screenshot · ${ref.path}`
+      side.append(img, cap)
+      fig.querySelector('.cv-pair').append(side)
+    }
+    if (mode === 'over' && !over) {
+      over = new Image()
+      over.src = ref.src
+      over.alt = ''
+      over.className = 'cv-ref-over'
+      over.setAttribute('aria-hidden', 'true')
+      dev.append(over)
+    }
+    const slider = fig.querySelector('.cv-ref input')
+    if (over) over.style.opacity = String(slider.value / 100)
+    if (side) side.hidden = mode !== 'side'
+    if (over) over.hidden = mode !== 'over'
+    slider.hidden = mode !== 'over'
+    fig.querySelectorAll('.cv-ref button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.ref === mode)))
+    requestAnimationFrame(drawLinks)
+    window.dispatchEvent(new CustomEvent('dc:view'))
+  }
+  world.addEventListener('click', (e) => {
+    const b = e.target.closest('.cv-ref button')
+    if (b) setRef(b.closest('.cv-frame'), b.dataset.ref)
+  })
+  world.addEventListener('input', (e) => {
+    if (!e.target.matches('.cv-ref input')) return
+    const over = e.target.closest('.cv-frame').querySelector('.cv-ref-over')
+    if (over) over.style.opacity = String(e.target.value / 100)
+  })
+
   // ---------- pages ----------
   function showPage(id, keepView) {
     if (!data.pages.some((p) => p.id === id)) id = data.pages[0].id
@@ -238,7 +289,7 @@
     pinch = null
   const inspecting = () => document.body.classList.contains('dc-inspecting')
   board.addEventListener('pointerdown', (e) => {
-    if (e.target.closest('.zoom, .dc-ui')) return
+    if (e.target.closest('.zoom, .dc-ui, .cv-ref')) return
     board.setPointerCapture(e.pointerId)
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
     if (pointers.size === 1)
@@ -279,7 +330,7 @@
       if (drag.target.closest?.('.dc-pin')) {
         window.dispatchEvent(new CustomEvent('dc:pin', { detail: { id: drag.target.closest('.dc-pin').dataset.id } }))
       } else if (inspecting()) {
-        window.dispatchEvent(new CustomEvent('dc:pick', { detail: { target: drag.target } }))
+        window.dispatchEvent(new CustomEvent('dc:pick', { detail: { target: drag.target, x: e.clientX, y: e.clientY } }))
       } else {
         const fig = drag.target.closest?.('.cv-frame')
         if (fig) zoomToFrame(fig)
@@ -342,7 +393,7 @@
     board, world,
     get view() { return view },
     get current() { return current },
-    showPage, zoomToFrame, inspecting,
+    showPage, zoomToFrame, inspecting, setRef,
   }
   showPage(location.hash.slice(1) || store.get('design-canvas.page') || data.pages[0].id)
   document.fonts?.ready.then(() => {

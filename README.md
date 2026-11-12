@@ -48,10 +48,10 @@ The engine itself is plain and predictable: it draws what the agent wrote and ch
 
 ## What you get
 
-- **A living design guide**: colours, type, spacing, radii, shadows, motion and icons, every component drawn with your app's own tokens, contrast checks, and light/dark switching.
-- **A screen canvas**: every screen of the app on one pan-and-zoom board, drawn in plain HTML, that an agent can keep adding to. Press `I` to inspect anything and see the tokens it uses.
+- **A living design guide**: colours, type, spacing, radii, shadows, motion and icons, every component drawn with your app's own tokens, contrast checks against the colours each text is used on, and any number of themes.
+- **A screen canvas**: every screen of the app on one pan-and-zoom board, drawn in plain HTML, that an agent can keep adding to. It lists the screens not drawn yet, and can lay a real screenshot over each drawing to compare. Press `I` to inspect anything and see the tokens it uses.
 - **Design tokens** in the Design Tokens Community Group format (DTCG 2025.10), one `tokens.json` per theme.
-- **A drift check** that fails when the code and the guide stop agreeing.
+- **A drift check** that fails when the code and the guide stop agreeing, and says how much it could not check.
 - **A designer review loop** through git: comments pinned to the screens, statuses, and replies, with no shared server.
 
 ## Free
@@ -82,6 +82,7 @@ Python 3.9+ only, no installs.
 python3 engine/build.py examples/acme-habits           # writes examples/acme-habits/out/
 python3 engine/build.py examples/acme-habits --check   # drift check, exits 1 on drift
 python3 engine/build.py examples/acme-habits --reviews # comments that need a fix
+python3 engine/build.py examples/acme-habits --shoot today  # one screen as a PNG (needs Chrome, Chromium or Edge)
 ```
 
 Open `examples/acme-habits/out/guide.html` and `out/canvas.html`. Acme Habits is a made-up app whose "code" is the small `app/` folder beside it. The sample reviews in `reviews/` (Sam the designer, Alex the developer) put two pins on the canvas: one that needs a fix and one resolved.
@@ -117,7 +118,9 @@ Each person writes only their own file in `reviews/`, so git never conflicts. Re
 | Feature | Works with |
 | --- | --- |
 | Guide, canvas, token export, inspect and comments | Any platform: built from `design.json` and the screens alone. |
-| Drift check (`--check`) | JS/TS theme objects and Tailwind configs, CSS custom properties, iOS `.colorset` files and SwiftUI/UIKit colours and numbers, Android XML resources, Flutter and Compose `Color(0x…)`. Each format has a test in `tests/test_engine.py`. Other formats fall back to a looser search near the `src` line. |
+| Screen list, coverage and screenshot overlay | Any platform. `--shoot` (one screen as a PNG) needs Chrome, Chromium or Edge installed. |
+| System icons (SF Symbols, Material Symbols) | Shown as labelled placeholders with the symbol's name. Their artwork is never copied. |
+| Drift check (`--check`) | JS/TS theme objects and Tailwind configs, CSS custom properties, iOS `.colorset` files, SwiftUI and UIKit colours (including `Color(hex:)` and hex strings), sizes, weights, shadows, durations in seconds and springs (`response`, `dampingFraction`), Android XML resources, Flutter and Compose `Color(0x…)`. Each format has a test in `tests/`. For other formats the check reads the `src` line itself, then the nearest definition of the token's name within 8 lines. |
 | "Used in" lists | JavaScript and TypeScript imports only, for now. |
 | Samples | One made-up React Native app so far. |
 
@@ -131,7 +134,7 @@ The agent does the reading. It follows imports to wherever the design system liv
 | `spec/DESIGN_JSON.md`, `spec/design.schema.json` | The standard format, for people and for validators. |
 | `spec/CANVAS.md` | How screens are drawn on the canvas. |
 | `spec/REVIEW.md` | The review file format, merging and validation. |
-| `engine/` | `build.py` (CLI), `tokens.py` (format, CSS, tokens, contrast, drift), `reviews.py` (review files), `serve.py` (the local review helper), `mcp_server.py` (MCP tools), `markdown.py` (chapters), `assets/` (page templates, canvas, `inspect.js`, `review.js`). |
+| `engine/` | `build.py` (CLI), `tokens.py` (format, CSS, tokens, contrast, drift), `screens.py` (screen list, coverage, screenshots, `--shoot`), `reviews.py` (review files), `serve.py` (the local review helper), `mcp_server.py` (MCP tools), `markdown.py` (chapters), `assets/` (page templates, canvas, `inspect.js`, `review.js`). |
 | `docs/INSTALL.md` | Install for each agent and MCP client. |
 | `AGENTS.md` | Instructions for agents working on design-canvas itself. |
 | `.claude-plugin/` | Claude Code plugin and marketplace manifests. |
@@ -139,7 +142,14 @@ The agent does the reading. It follows imports to wherever the design system liv
 
 ## Drift check
 
-Every token in `design.json` carries `src: "path/to/file.ts:12"`. `--check` reopens that spot and looks for the token's value where its name is defined, so a changed colour, size or spring fails the check. Values the code computes rather than writes (a generated dark theme) are marked `derived` and listed as not checkable. A token with neither `src` nor `derived` also fails the check, so nothing is skipped silently.
+Every token in `design.json` carries `src: "path/to/file.ts:12"`, or one per theme when light and dark come from two constants. `--check` reopens that line and compares every value the guide shows: colours and their opacity, sizes, line heights, weights, spacing, radii, shadows, durations and springs. A changed value fails the check.
+
+Nothing is skipped silently:
+- Values the code computes rather than writes (a generated dark theme) are marked `derived`. `--check` lists them and says how much that is ("3% not checked"). In CI, `--check --max-derived 10` also fails when more than 10% of the tokens are derived.
+- A value the code doesn't state (a weight left at the platform default) is listed as "not checked".
+- A token with neither `src` nor `derived` fails the check.
+
+The build also warns about a token variable that `design.json` doesn't define (a typo like `var(--c-tag-3)`), and about a screen whose source file changed after it was drawn.
 
 ## Privacy
 
