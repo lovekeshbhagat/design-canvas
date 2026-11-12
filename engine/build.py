@@ -267,6 +267,21 @@ def theme_buttons(d: Design) -> str:
 
 
 # ---------------------------------------------------------------- guide
+def canvas_cta(n_screens: int) -> str:
+    """The highlighted link from the guide's home to the screen canvas."""
+    if not n_screens:
+        return ""
+    title = f"See all {n_screens} screens on the canvas" if n_screens > 1 else "See the screen on the canvas"
+    return (
+        '<a class="cta" href="canvas.html">'
+        '<span class="cta-art" aria-hidden="true"><i></i><i></i><i></i><em></em></span>'
+        f'<span class="cta-text"><small>Screen canvas</small><b>{title}</b>'
+        '<span>Pan and zoom around the app. Press Inspect, then pick any part to see its real tokens and leave a comment.</span></span>'
+        '<span class="cta-go">Open the canvas<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M11 5l5 5-5 5"/></svg></span>'
+        "</a>"
+    )
+
+
 def build_guide(d: Design, drift_result, usage, n_screens: int, web_fonts: bool = True):
     views = {
         "colors": view_colors(d), "roles": view_roles(d), "type": view_type(d), "fonts": view_fonts(d),
@@ -295,8 +310,6 @@ def build_guide(d: Design, drift_result, usage, n_screens: int, web_fonts: bool 
         nav.append((meta.get("group", "Guide"), sid, label, n_parts if parts else None))
         if parts and n_parts:
             ladder.append((sid, label, n_parts))
-    if n_screens:
-        ladder.append(("canvas.html", "Screens", n_screens))
     groups: dict[str, list] = {}
     for g, sid, label, n in nav:
         groups.setdefault(g, []).append((sid, label, n))
@@ -306,14 +319,15 @@ def build_guide(d: Design, drift_result, usage, n_screens: int, web_fonts: bool 
         + "</div>" for g, items in groups.items())
     if n_screens:
         nav_html += f'<div class="nav-group"><span class="nav-label">Canvas</span><a href="canvas.html">All screens <small>{n_screens}</small></a></div>'
-    ladder_html = "".join(f'<li><a href="{"#" + h if not h.endswith(".html") else h}"><b>{n}</b><span>{esc(lbl)}</span></a></li>' for h, lbl, n in ladder)
+    ladder_html = "".join(f'<li><a href="#{h}"><b>{n}</b><span>{esc(lbl)}</span></a></li>' for h, lbl, n in ladder)
     page = page_shell(
         "guide.html", d, web_fonts,
         TITLE=f"{esc(d.name)} design guide",
         DESCRIPTION=esc(d.app.get("description", f"The {d.name} design system, read from the code.")),
         CSS_VARS=d.css(), CSS=read(ASSETS / "guide.css") + "\n" + d.icon_css() + "\n" + read(d.dir / "parts.css"),
         JS=read(ASSETS / "guide.js"), NAV=nav_html, SPRITE=d.sprite(), SECTIONS=expand_icons("\n".join(sections)),
-        LADDER=ladder_html, LADDER_N=str(len(ladder)), THEMES=theme_buttons(d), LEDE=esc(d.app.get("description", "")),
+        LADDER=ladder_html, LADDER_N=str(len(ladder)), CANVAS_CTA=canvas_cta(n_screens),
+        THEMES=theme_buttons(d), LEDE=esc(d.app.get("description", "")),
         PLATFORM=esc(d.app.get("platform", "app")), DEFAULT_THEME=esc(d.default), DEFAULT_SCHEME=esc(d.themes[0]["scheme"]),
         INITIAL=esc(d.name[:1].upper()), SCHEMES=script_json({t["id"]: t["scheme"] for t in d.themes}),
     )

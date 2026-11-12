@@ -193,8 +193,17 @@ class Sample(unittest.TestCase):
             tokens = json.loads((out / "tokens.json").read_text(encoding="utf-8"))
             self.assertEqual(tokens["color"]["primary"]["$value"]["hex"], "#3b5bfd")
             self.assertNotIn("missing frames", (out / "canvas.html").read_text(encoding="utf-8"))
+            guide = (out / "guide.html").read_text(encoding="utf-8")
+            self.assertIn('<a class="cta" href="canvas.html">', guide)
+            self.assertIn("See all 5 screens on the canvas", guide)
+            self.assertNotIn("{{", guide)
         finally:
             shutil.rmtree(out)
+
+    def test_canvas_link_wording(self):
+        self.assertEqual(build.canvas_cta(0), "")
+        self.assertIn("See the screen on the canvas", build.canvas_cta(1))
+        self.assertIn("See all 12 screens on the canvas", build.canvas_cta(12))
 
 
 if __name__ == "__main__":
