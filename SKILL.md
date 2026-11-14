@@ -45,6 +45,7 @@ Add `design-canvas/out/` to the app's `.gitignore` (create it if there is none):
    Fix every error, every drift line and every "NO SRC" line before going on. `--check` passes only when every token is either found where its `src` says it is defined, or marked `derived`.
    - `derived` is only for values the code computes. It is never a way to silence drift: fix the `src` line, the `code` name or the value instead.
    - If light and dark come from two constants, give `code` and `src` one entry per theme.
+   - For an alias (`primary: palette.blue300`), point `src` at the line that defines the token, not the palette entry. The check follows the reference, so re-pointing it is caught.
    - `--check` prints the derived share. CI can cap it with `--max-derived 10`. Treat "not checked" and "could be checked" lines as work left to do.
 3. **Icons.** List only the icons the app registers or imports.
    - Icons that come as files or a package (Lucide, Material Icons, the app's own SVGs): copy each icon's inner SVG shapes from where it really comes from, and record `source`. Keep the set's licence in mind; note it in the guide if it needs attribution.
@@ -100,5 +101,5 @@ Designers inspect and comment on `out/canvas.html`, and their reviews arrive thr
 
 ## Limits
 
-- The drift check understands JS/TS theme objects, Tailwind configs, CSS custom properties, iOS `.colorset` files, SwiftUI/UIKit colours and numbers, Android XML resources, and Flutter/Compose `Color(0x…)`. For anything else it checks the `src` line itself, then the nearest definition of the name within 8 lines. Say so in the guide when the app uses another format.
+- The drift check understands JS/TS theme objects, Tailwind configs, CSS custom properties, iOS `.colorset` files, SwiftUI/UIKit colours and numbers, Android XML resources, and Flutter/Compose `Color(0x…)`. For anything else it checks the `src` line itself, then the nearest definition of the name within 8 lines. It follows a reference only into the same file, the token's other `src` files and files with the same extension in the same folder. Say so in the guide when the app uses another format.
 - "Used in" lists only read JavaScript/TypeScript imports.

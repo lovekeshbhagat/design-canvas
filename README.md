@@ -144,6 +144,10 @@ The agent does the reading. It follows imports to wherever the design system liv
 
 Every token in `design.json` carries `src: "path/to/file.ts:12"`, or one per theme when light and dark come from two constants. `--check` reopens that line and compares every value the guide shows: colours and their opacity, sizes, line heights, weights, spacing, radii, shadows, durations and springs. A changed value fails the check.
 
+It also catches changes that keep the colours the same:
+- **A re-pointed alias.** A semantic token that refers to a palette entry (`primary: palette.blue300`) is followed to that entry. Pointing dark mode at `palette.blue200` fails the check.
+- **A rename.** When the `src` line now defines `brand` where the guide says `primary`, the check fails, so the guide never shows a name the code no longer uses.
+
 Nothing is skipped silently:
 - Values the code computes rather than writes (a generated dark theme) are marked `derived`. `--check` lists them and says how much that is ("3% not checked"). In CI, `--check --max-derived 10` also fails when more than 10% of the tokens are derived.
 - A value the code doesn't state (a weight left at the platform default) is listed as "not checked".

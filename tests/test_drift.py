@@ -422,6 +422,89 @@ class Compose(Base):
         self.drifts(design, {"Theme.kt": self.kt})
 
 
+class AliasesAndRenames(Base):
+    """A semantic token that points at a palette entry, re-pointed or renamed while the colours stay the same."""
+    palette = "export const palette = {\n  indigo4: '#748FFC',\n  indigo3: '#91A7FF',\n}\n"
+    swift = ('enum Palette {\n  static let sand = Color(hex: "E8E2D0")\n  static let slate = Color(hex: "0F1720")\n'
+             '  static let graphite = Color(hex: "495057")\n}\n')
+    themes = [{"id": "light"}, {"id": "dark"}]
+
+    def fails(self, design, files, pattern):
+        res = self.check(design, files)
+        self.assertEqual(len(res[0]), 1, res[0])
+        self.assertRegex(res[0][0], pattern)
+        return res
+
+    def accent(self, src="theme.ts:3", **kw):
+        return {"colors": {"accent": {"value": "#748FFC", "src": src, **kw}}}
+
+    def theme(self, ref):
+        return "import { palette } from './palette'\nexport const dark = {\n  accent: " + ref + ",\n}\n"
+
+    def test_alias_is_followed_into_the_palette_file(self):
+        self.ok(self.accent(), {"palette.ts": self.palette, "theme.ts": self.theme("palette.indigo4")})
+        res = self.drifts(self.accent(), {"palette.ts": self.palette, "theme.ts": self.theme("palette.indigo3")})
+        self.assertIn("via palette.indigo3", res[0][0])
+
+    def test_alias_with_no_definition_says_so(self):
+        res = self.drifts(self.accent(), {"theme.ts": self.theme("shades.indigo4")})
+        self.assertIn("shades.indigo4, whose definition was not found", res[0][0])
+
+    def test_nested_palette_entry(self):
+        pal = "export const colors = {\n  blue: { 400: '#4C6EF5', 300: '#748FFC' },\n  green: { 300: '#8CE99A' },\n}\n"
+        self.ok(self.accent(), {"palette.ts": pal, "theme.ts": self.theme("colors.blue[300]")})
+        self.drifts(self.accent(), {"palette.ts": pal, "theme.ts": self.theme("colors.green[300]")})
+
+    def test_swift_light_and_dark_alias(self):
+        theme = "extension Color {\n  static let surface = Color(light: Palette.sand, dark: Palette.{dark})\n}\n"
+        design = {"themes": self.themes, "colors": {"surface": {"value": {"light": "#E8E2D0", "dark": "#0F1720"},
+                                                                "src": "Theme.swift:2"}}}
+        self.ok(design, {"Palette.swift": self.swift, "Theme.swift": theme.replace("{dark}", "slate")})
+        res = self.drifts(design, {"Palette.swift": self.swift, "Theme.swift": theme.replace("{dark}", "graphite")})
+        self.assertIn("#0f1720", res[0][0].lower())
+
+    def test_repointed_alias_when_src_is_the_palette_entry(self):
+        theme = "extension Color {\n  static let surface = Color(light: Palette.sand, dark: Palette.{dark})\n}\n"
+        design = {"themes": self.themes, "colors": {"surface": {
+            "value": {"light": "#E8E2D0", "dark": "#0F1720"}, "code": {"light": "Palette.sand", "dark": "Palette.slate"},
+            "src": {"light": "Palette.swift:2", "dark": "Palette.swift:3"}}}}
+        self.ok(design, {"Palette.swift": self.swift, "Theme.swift": theme.replace("{dark}", "slate")})
+        self.fails(design, {"Palette.swift": self.swift, "Theme.swift": theme.replace("{dark}", "graphite")},
+                   r"`surface` now refers to Palette\.sand, Palette\.graphite \(Theme\.swift:2\), not `Palette\.slate`")
+
+    def test_src_lists_the_alias_line_and_the_palette_line(self):
+        files = {"theme.ts": "const palette = {\n  indigo4: '#748FFC',\n  indigo3: '#91A7FF' }\nexport const dark = {\n"
+                             "  accent: palette.indigo4,\n}\n"}
+        self.ok(self.accent("theme.ts:5, theme.ts:2"), files)
+        files["theme.ts"] = files["theme.ts"].replace("accent: palette.indigo4", "accent: palette.indigo3")
+        self.fails(self.accent("theme.ts:5, theme.ts:2"), files,
+                   r"now refers to palette\.indigo3, but its src line \(theme\.ts:2\) defines `indigo4`")
+
+    def test_src_at_the_palette_entry_without_a_code_name(self):
+        near = "const palette = {\n  indigo4: '#748FFC',\n  indigo3: '#91A7FF' }\nexport const dark = {\n  accent: palette.indigo4,\n}\n"
+        far = {"palette.ts": self.palette, "theme.ts": self.theme("palette.indigo4")}
+        for code in (None, "theme.accent"):
+            kw = {"code": code} if code else {}
+            self.ok(self.accent("theme.ts:2", **kw), {"theme.ts": near}, f"near, {code}")
+            self.fails(self.accent("theme.ts:2", **kw), {"theme.ts": near.replace("palette.indigo4", "palette.indigo3")},
+                       r"now refers to palette\.indigo3, but its src line \(theme\.ts:2\) defines `indigo4`")
+            self.ok(self.accent("palette.ts:2", **kw), far, f"other file, {code}")
+            self.fails(self.accent("palette.ts:2", **kw), {**far, "theme.ts": self.theme("palette.indigo3")},
+                       r"`accent` now refers to palette\.indigo3 \(theme\.ts:3\), but its src line \(palette\.ts:2\) defines `indigo4`")
+
+    def test_renamed_token_fails_even_with_the_same_colour(self):
+        files = {"theme.ts": "export const dark = {\n  bg: '#0E0F12',\n  brand: '#748FFC',\n}\n"}
+        self.fails(self.accent("theme.ts:3", code="theme.accent"), files,
+                   r"its src line now defines `brand`, not `accent` \(theme\.ts:3\)")
+
+    def test_names_that_are_the_same_token_are_not_renames(self):
+        css = ":root {\n  --c-accent: #748FFC;\n}\n"
+        self.ok(self.accent("theme.css:2"), {"theme.css": css})
+        tw = "module.exports = { theme: { colors: {\n  accent: {\n    DEFAULT: '#748FFC',\n  },\n} } }\n"
+        self.ok(self.accent("tailwind.config.js:3"), {"tailwind.config.js": tw})
+        self.ok(self.accent("Colors.kt:2"), {"Colors.kt": "object AppColors {\n  val Accent = Color(0xFF748FFC)\n}\n"})
+
+
 class Sample(unittest.TestCase):
     def test_sample_has_no_drift_and_nothing_unchecked(self):
         res = Design(SAMPLE).check()

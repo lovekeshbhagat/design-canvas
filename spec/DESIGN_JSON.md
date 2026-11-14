@@ -43,10 +43,14 @@ A token is either a bare value (`"md": 12`, `"bg": "#FFFFFF"`) or an object:
 
 A theme missing from `code` or `src` uses the default theme's entry. The plain string forms still work.
 
+**Aliases.** When a token's value is another name (`primary: palette.blue300`, `Color(light: Palette.sand, dark: Palette.slate)`), point `src` at the line that defines the token, not at the palette entry. The check follows the reference to its definition, in the same file, the token's other `src` files or a file with the same extension in the same folder, so re-pointing the alias in one theme is drift. If `src` points at the palette entry instead, the check looks for the token's own definition (`primary: …`, or the definition `code` names) in those same files, and fails when it now refers to another entry of that palette.
+
 **What the drift check (`--check`) compares.**
 - **Where it looks.** If the `src` line defines the token's name (or its `code` name), only that definition counts. Otherwise it tries the `src` line itself, then the nearest definition of the name within 8 lines (code moves). Other values nearby never count, and neither do comments.
   - A Swift `case .headline, .body: 18` defines both names.
   - A call such as `.sheet(isPresented:)` is not a definition.
+  - **References are followed.** `palette.blue300`, `colors.blue[300]`, `var(--blue-300)` and `@color/blue_300` are read through to the value they name. A reference whose definition isn't found is named in the drift line, so you can add its file to `src`.
+  - **Renames fail.** When the `src` line now defines a different name (`brand:` where the token is `primary`) and the name isn't defined within 8 lines, the check fails even if the colour is the same, because the guide's name is out of date. Names that are the same token count as a match (`--c-primary`, `onPrimary`, `colorPrimary`), and so do keys that hold part of a value (`DEFAULT`, `500`, `red`, `light`).
 - **What it compares.** Every field the guide shows:
   - colour and alpha
   - type size, line height, letter spacing, and the weight of the type's font

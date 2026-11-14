@@ -664,10 +664,136 @@ class Design:
                     cache[path] = None
             return cache[path]
 
-        def lookups(src, names):
+        siblings_cache, spans_cache, defs_cache = {}, {}, {}
+
+        def defs_in(path, lines, name):
+            """[(line index, match)] for every definition of `name` in a file."""
+            if (path, name) not in defs_cache:
+                rx = _defn(name)
+                defs_cache[(path, name)] = [(i, m) for i, text in enumerate(lines) for m in [rx.search(_code_part(text))] if m]
+            return defs_cache[(path, name)]
+
+        def siblings(path):
+            """Files next to `path` with the same extension (where a palette usually lives)."""
+            if path not in siblings_cache:
+                here = root / path
+                try:
+                    files = sorted(f for f in here.parent.iterdir()
+                                   if f.is_file() and f.suffix == here.suffix and f.name != here.name and f.stat().st_size < 400_000)
+                    siblings_cache[path] = [f.relative_to(root).as_posix() for f in files[:60]]
+                except (OSError, ValueError):
+                    siblings_cache[path] = []
+            return siblings_cache[path]
+
+        def spans(path, lines, name):
+            """(first, last) line of every definition of a container `name` in a file."""
+            if (path, name) not in spans_cache:
+                rx, out = _parent_rx(name), []
+                for i, text in enumerate(lines):
+                    m = rx.search(_code_part(text))
+                    if m:
+                        out.append((i, _extend(lines, i, m, max_lines=5000).last))
+                spans_cache[(path, name)] = out
+            return spans_cache[(path, name)]
+
+        def resolve(segs, path, paths, skip):
+            """-> (path, Look) for the one definition a reference points at: in the same file, then the token's
+            other src files, then files next to it. None when there is none, or more than one."""
+            last, parent = segs[-1], (segs[-2] if len(segs) > 1 else None)
+            seen = set()
+            for tier in ([path], paths, siblings(path)):
+                found = []
+                for p in tier:
+                    if p in seen or not safe_rel(root, p):
+                        continue
+                    seen.add(p)
+                    lines = read(p)
+                    if not lines:
+                        continue
+                    hits = [(i, m) for i, m in defs_in(p, lines, last) if (p, i) not in skip]
+                    if hits and parent:
+                        sp = spans(p, lines, parent)
+                        inside = [(i, m) for i, m in hits if any(a <= i <= b for a, b in sp)]
+                        hits = inside or ([] if sp else hits)
+                    found += [(p, lines, i, m) for i, m in hits]
+                if len(found) == 1:
+                    p, lines, i, m = found[0]
+                    return p, _extend(lines, i, m)
+                if found:
+                    return None
+            return None
+
+        def follow(look, path, paths, skip=frozenset(), depth=0):
+            """`look` plus the definitions its references point at, so an alias (`primary: palette.blue300`)
+            is checked against the colour it really resolves to."""
+            if look.how == "file" or depth > 3:
+                return look
+            skip = skip | {(path, k) for k in range(look.first, look.last + 1)}
+            extra, refs, missing = [], [], []
+            for shown, segs in _refs_in(look.value if look.how == "defined" else look.text):
+                hit = resolve(segs, path, paths, skip)
+                if hit:
+                    refs.append(shown)
+                    extra.append(follow(hit[1], hit[0], paths, skip, depth + 1))
+                elif segs[0] not in _PLATFORM_ROOTS:
+                    missing.append(shown)
+            if not extra and not missing:
+                return look
+            joined = _Look.join([look] + extra)
+            joined.how, joined.refs, joined.missing = look.how, refs + joined.refs, missing + joined.missing
+            return joined
+
+        def ref_names(refs):
+            return {segs[-1] for r in refs for _, segs in _refs_in(r)[:1]}
+
+        def token_refs(key, paths, listed=()):
+            """[(reference, "file:line")] written in the token's own definitions (`primary: palette.blue300`), in its src
+            files and the files next to them."""
+            out = []
+            for p in dict.fromkeys(paths + [x for q in paths for x in siblings(q)]):
+                lines = read(p) if safe_rel(root, p) else None
+                for i, m in defs_in(p, lines, str(key)) if lines else []:
+                    if (p, i) not in listed:
+                        out += [(shown, f"{p}:{i + 1}") for shown, _ in _refs_in(_extend(lines, i, m).value)]
+            return out
+
+        def repointed(key, code, paths):
+            """`code` names a palette entry (`palette.blue300`), but the token's own definition (`primary: …`, in a
+            src file or a file next to one) now refers to another entry of that palette. -> a message, or None."""
+            chains = [segs for c in (code if isinstance(code, list) else [code]) if isinstance(c, str)
+                      for _, segs in _refs_in(c) if len(segs) > 1 and segs[-1].lower() != str(key).lower()]
+            if not chains:
+                return None
+            files = list(dict.fromkeys(paths + [x for p in paths for x in siblings(p)]))
+            for segs in chains:
+                parent, last, seen, where = segs[-2], segs[-1], [], None
+                for p in files:
+                    lines = read(p) if safe_rel(root, p) else None
+                    for i, m in defs_in(p, lines, str(key)) if lines else []:
+                        for shown, rs in _refs_in(_extend(lines, i, m).value):
+                            if len(rs) > 1 and rs[-2] == parent:
+                                if rs[-1] == last:
+                                    break
+                                seen.append(shown)
+                                where = where or f"{p}:{i + 1}"
+                        else:
+                            continue
+                        seen = None  # found the reference `code` names: not re-pointed
+                        break
+                    if seen is None:
+                        break
+                if seen:
+                    return (f"`{key}` now refers to {', '.join(dict.fromkeys(seen))} ({where}), not `{'.'.join(segs)}`. "
+                            f"Re-pointed? Update the value, `code` and `src`.")
+            return None
+
+        def lookups(src, names, key=None, code=None, own_names=()):
             """-> ([Look, ...], error): the texts to test, best first. Each joins one piece per src part."""
-            options = []
-            for part in [s.strip() for s in src.split(",") if s.strip()]:
+            options, pending = [], []
+            parts = [s.strip() for s in src.split(",") if s.strip()]
+            paths = [re.match(r"(.+?)(?::(\d+))?$", x).group(1).strip() for x in parts]
+            listed = {(mm.group(1).strip(), int(mm.group(2)) - 1) for mm in (re.match(r"(.+?):(\d+)$", x) for x in parts) if mm}
+            for part in parts:
                 m = re.match(r"(.+?)(?::(\d+))?$", part)
                 path, line = m.group(1).strip(), m.group(2)
                 if not safe_rel(root, path):
@@ -677,17 +803,47 @@ class Design:
                     return None, f"source file not found: {path}"
                 if not line:
                     whole = "\n".join(lines)
-                    options.append([_definitions(lines, range(len(lines)), names) or _Look(whole, whole, "file")])
+                    found = _definitions(lines, range(len(lines)), names)
+                    options.append([follow(found, path, paths) if found else _Look(whole, whole, "file")])
                     continue
                 i = int(line) - 1
                 if not 0 <= i < len(lines):
                     return None, f"line {line} is past the end of {path} ({len(lines)} lines)"
                 own = _definitions(lines, [i], names)
                 if own:
-                    options.append([own])
+                    options.append([follow(own, path, paths)])
                     continue
-                near = _definitions(lines, range(max(0, i - 8), min(len(lines), i + 9)), names, nearest=i)
-                options.append([_src_line(lines, i)] + ([near] if near else []))
+                near = _definitions(lines, [k for k in range(max(0, i - 8), min(len(lines), i + 9)) if (path, k) not in listed],
+                                    names, nearest=i)  # a definition src lists is checked on its own line
+                other = _defines_other(lines[i], list(names) + list(own_names), self.theme_ids)
+                if other and not near:
+                    pending.append((other, f"{path}:{line}"))
+                elif other:  # src is a palette entry and the token's own definition is close by
+                    via = follow(near, path, paths).refs
+                    if via and other not in ref_names(via):
+                        return None, (f"`{names[0]}` now refers to {', '.join(dict.fromkeys(via))}, but its src line "
+                                      f"({path}:{line}) defines `{other}`. Re-pointed? Update the value, `code` and `src`.")
+                options.append([follow(_src_line(lines, i), path, paths)] + ([follow(near, path, paths)] if near else []))
+            refs = [r for o in options for x in o for r in x.refs + x.missing]
+            for other, where in pending:
+                if other in ref_names(refs):
+                    continue  # the palette entry the token's own definition points at
+                if not refs and key is not None:
+                    found = token_refs(key, paths, listed)
+                    if other in ref_names([r for r, _ in found]):
+                        continue
+                    if found:
+                        return None, (f"`{key}` now refers to {', '.join(dict.fromkeys(r for r, _ in found))} ({found[0][1]}), "
+                                      f"but its src line ({where}) defines `{other}`. Re-pointed? Update the value, `code` and `src`.")
+                if refs:
+                    return None, (f"`{names[0]}` now refers to {', '.join(dict.fromkeys(refs))}, but its src line ({where}) "
+                                  f"defines `{other}`. Re-pointed? Update the value, `code` and `src`.")
+                return None, (f"its src line now defines `{other}`, not `{names[0]}` ({where}). "
+                              f"Renamed? Update the token's `code` and name. Moved? Update `src`.")
+            if key is not None:
+                moved = repointed(key, code, paths)
+                if moved:
+                    return None, moved
             looks = [_Look.join([o[0] for o in options])]
             if any(len(o) > 1 for o in options):
                 looks.append(_Look.join([o[-1] for o in options]))
@@ -708,10 +864,14 @@ class Design:
                 unsourced.append(label)
                 return
             per_theme = isinstance(meta.get("src"), dict) or isinstance(meta.get("code"), dict)
+            codes = meta.get("code")
+            codes = list(codes.values()) if isinstance(codes, dict) else [codes]
+            all_names = [n for c in codes for n in _names_for(key, c)]  # every theme's name for this token
             failed, unknown = [], []
             for theme in dict.fromkeys(t[3] for t in tests) or [None]:
                 src = self._pick(meta.get("src"), theme)
-                looks, err = lookups(src, _names_for(key, self._pick(meta.get("code"), theme, join=False)))
+                code = self._pick(meta.get("code"), theme, join=False)
+                looks, err = lookups(src, _names_for(key, code), key, code, all_names)
                 if err:
                     problems.append(f"`{label}`: {err}")
                     return
@@ -730,7 +890,10 @@ class Design:
                 if bad:
                     where = {"defined": "where it is defined", "line": "on its src line", "file": "in the file"}[look.how]
                     what = ", ".join(f"{f} {shown}" + (f" ({r})" if isinstance(r, str) else "") for f, shown, r in bad)
-                    failed.append(f"{what} not found {where}{tag} ({src})")
+                    via = f", via {', '.join(dict.fromkeys(look.refs))}" if look.refs else ""
+                    lost = (f"; it refers to {', '.join(dict.fromkeys(look.missing))}, whose definition was not found "
+                            f"(add that file to src)") if look.missing else ""
+                    failed.append(f"{what} not found {where}{tag} ({src}{via}){lost}")
                 unknown += [f"{label} {f}{tag}" for f in none]
             if failed:
                 problems.append(f"`{label}`: " + "; ".join(failed))
@@ -898,13 +1061,15 @@ class _Look:
     """Text a token's values are looked for in. how: 'defined' (a definition of its name), 'line' (the src
     line itself) or 'file' (a whole file). value is the text after the defining key."""
 
-    def __init__(self, text, value, how, first=0, last=0):
+    def __init__(self, text, value, how, first=0, last=0, refs=(), missing=()):
         self.text, self.value, self.how, self.first, self.last = text, value, how, first, last
+        self.refs, self.missing = list(refs), list(missing)  # references followed / not found
 
     @staticmethod
     def join(looks):
         how = "defined" if any(x.how == "defined" for x in looks) else looks[0].how
-        return _Look("\n".join(x.text for x in looks), "\n".join(x.value for x in looks), how, looks[0].first, looks[0].last)
+        return _Look("\n".join(x.text for x in looks), "\n".join(x.value for x in looks), how, looks[0].first, looks[0].last,
+                     [r for x in looks for r in x.refs], [r for x in looks for r in x.missing])
 
 
 _NUM = r"-?(?:\d+(?:\.\d*)?|\.\d+)"
@@ -1046,6 +1211,82 @@ def _definitions(lines, idxs, names, nearest=None):
             return 0 if f.first <= nearest <= f.last else min(abs(f.first - nearest), abs(f.last - nearest))
         return min(found, key=lambda f: (dist(f), f.first))
     return None
+
+
+# -- references (aliases) and renames
+# `palette.blue300`, `Palette.slate`, `colors.blue[300]`, `theme?.surface`; never a call such as `Animation.spring(`.
+_REF_CHAIN = re.compile(r"(?<![\w$.#@'\"-])([A-Za-z_$][\w$]*)((?:\s*\??\.\s*[A-Za-z_$][\w$]*|\[\s*['\"]?[\w-]+['\"]?\s*\])+)(?![\w$(]|\s*\()")
+_REF_VAR = re.compile(r"var\(\s*(--[\w-]+)")  # CSS var(--blue-300)
+_REF_RES = re.compile(r"@(?:color|dimen)/([\w.]+)")  # Android @color/blue_300
+_STRING = re.compile(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"|`(?:\\.|[^`\\])*`")
+# Roots that name the platform, not the app: a missing definition there is not worth a hint.
+_PLATFORM_ROOTS = {"Color", "UIColor", "NSColor", "Colors", "SwiftUI", "Animation", "Font", "Math", "Number", "String",
+                   "CGFloat", "Double", "Float", "Int", "Platform", "StyleSheet", "Dimensions", "this", "self", "Self"}
+
+
+def _refs_in(value):
+    """References written in a definition's value, as (shown, [segments]), in order."""
+    code = "\n".join(_code_part(line) for line in value.split("\n"))
+    out = [(f"var({m.group(1)})", [m.group(1)]) for m in _REF_VAR.finditer(code)]
+    out += [(m.group(0), [m.group(1)]) for m in _REF_RES.finditer(code)]
+    for m in _REF_CHAIN.finditer(_STRING.sub('""', code)):
+        segs = [x for x in re.split(r"[\s?.\[\]'\"]+", m.group(0)) if x]
+        out.append((re.sub(r"\s+", "", m.group(0)), segs))
+    return [r for i, r in enumerate(out) if r[0] not in [x[0] for x in out[:i]]]
+
+
+@lru_cache(maxsize=None)
+def _parent_rx(name):
+    """A definition of a container: `palette = {`, `palette: {`, `enum Palette {`, `object Palette {`."""
+    n = re.escape(name)
+    return re.compile(rf"{_key_rx(name)}|\b(?:enum|struct|class|object|extension|namespace|interface)\s+{n}\b")
+
+
+# The start of a line that defines a name: `brand: …`, `static let brand = …`, `val Brand: Color = …`,
+# `--c-brand: …`, `"brand": …`, `$brand: …`, `case .brand:`. Group 1 is the name.
+_DEF_START = re.compile(
+    r"^\s*(?:(?:export|public|private|internal|fileprivate|open|final|static|override|readonly|const|let|var|val|"
+    r"lateinit|late|@\w+(?:\([^)]*\))?)\s+)*(?:case\s+\.?)?(?:[A-Z][\w<>?]*\s+(?=[A-Za-z_$][\w$-]*\s*[:=]))?"
+    r"['\"]?(--[\w-]+|\$?[A-Za-z_][\w$-]*)['\"]?\s*(?::(?!:)|=(?!=)|->)")
+_XML_NAME = re.compile(r"<\s*\w+[^>]*\bname\s*=\s*['\"]([\w.-]+)['\"]")
+# Keys that hold a part of a value rather than name a token.
+_FIELD_KEYS = {
+    "default", "light", "dark", "any", "value", "values", "base", "main", "color", "colour", "colors", "red", "green",
+    "blue", "alpha", "components", "hex", "rgb", "rgba", "srgb", "x", "y", "width", "height", "opacity", "radius",
+    "size", "weight", "family", "fontfamily", "fontsize", "fontweight", "lineheight", "letterspacing", "duration",
+    "damping", "stiffness", "mass", "response", "dampingfraction", "bounce", "offset", "blur", "spread", "elevation",
+    "shadowcolor", "shadowoffset", "shadowopacity", "shadowradius", "dx", "dy", "type", "style", "name", "src", "doc",
+}
+
+
+def _words(name):
+    """`--c-onPrimary` -> ['c', 'on', 'primary']."""
+    name = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", name.lstrip("-$"))
+    return [w.lower() for w in re.split(r"[\s_.\-]+", name) if w]
+
+
+def _within(small, big):
+    return bool(small) and any(big[k:k + len(small)] == small for k in range(len(big) - len(small) + 1))
+
+
+def _defines_other(line, names, skip=()):
+    """The name `line` defines when it is a different token from every one of `names`, else None.
+    `onPrimary` vs `primary` or `--c-primary` vs `primary` count as the same token; parts of a value
+    (`DEFAULT`, `red`, `500`, a theme id) never count."""
+    code = _code_part(line)
+    m = _DEF_START.match(code) or _XML_NAME.search(code)
+    if not m:
+        return None
+    other = m.group(1)
+    w = _words(other)
+    if (not w or len(other.lstrip("-$")) < 2 or other.lower() in _FIELD_KEYS or "".join(w) in _FIELD_KEYS
+            or other.lower() in {s.lower() for s in skip}):
+        return None
+    for n in names:
+        nw = _words(n)
+        if _within(nw, w) or _within(w, nw):
+            return None
+    return other
 
 
 def _direct_values(text, names):
