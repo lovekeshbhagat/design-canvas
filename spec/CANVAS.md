@@ -38,7 +38,7 @@ List every screen and every state that looks different **before** you draw, from
 | `source` | The file (or files) that render it. Same rules as in the screen file. |
 | `page` | Optional; the canvas page it belongs on. Its page header then lists it while it is not drawn. |
 
-The build prints `canvas: 6 of 37 screens drawn · not drawn: …` and puts `"coverage": {"drawn", "listed", "missing", "unlisted"}` in `--json`. The canvas side panel lists the screens not drawn yet, and the guide's home says "See 6 of 37 screens on the canvas". A screen that is drawn but not listed still counts, and is named in `unlisted` so you can add it. Without `screens.json` everything works as before.
+The build prints `canvas: 5 of 12 screens drawn · not drawn: …` and puts `"coverage": {"drawn", "listed", "missing", "unlisted"}` in `--json`. The canvas side panel lists the screens not drawn yet, and the guide's home says "See 5 of 12 screens on the canvas". A screen that is drawn but not listed still counts, and is named in `unlisted` so you can add it. Without `screens.json` everything works as before.
 
 ## Page JSON
 
@@ -109,7 +109,7 @@ The default phone frame is 390 × 844 px. The status bar is 47 px tall and is dr
 
 ## Compare with the real app
 
-A drawing can look right and still be wrong: a size off by 30% is easy to miss by eye. Compare each screen with a real screenshot.
+A drawing can look right and still be wrong: a size that is slightly off is easy to miss by eye. Compare each screen with a real screenshot.
 
 1. Capture the screen in the running app (simulator, emulator, browser, a preview or demo mode), or take it from the repo's store screenshots. Save it in `refs/` and set `reference` on the frame.
 2. Build. The frame gets a **Drawing / Side by side / Overlay** switch. Overlay lays the screenshot on top of the drawing with an opacity slider, so any size or position that is off shows at once.

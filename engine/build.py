@@ -377,7 +377,7 @@ def theme_buttons(d: Design) -> str:
 # ---------------------------------------------------------------- guide
 def canvas_cta(n_screens: int, coverage: dict | None = None) -> str:
     """The highlighted link from the guide's home to the screen canvas.
-    coverage (from canvas/screens.json) turns the title into "See 6 of 37 screens on the canvas"."""
+    coverage (from canvas/screens.json) turns the title into "See 5 of 12 screens on the canvas"."""
     if not n_screens:
         return ""
     todo = len(coverage["missing"]) if coverage else 0

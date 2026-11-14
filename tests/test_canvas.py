@@ -163,9 +163,9 @@ class Coverage(Canvas):
         self.assertEqual((summary["coverage"]["drawn"], summary["coverage"]["listed"]), (0, 1))
 
     def test_cta_wording(self):
-        cov = {"drawn": 6, "listed": 37, "missing": [{}] * 31, "unlisted": []}
-        self.assertIn("See 6 of 37 screens on the canvas", build.canvas_cta(6, cov))
-        self.assertIn("31 more are listed but not drawn yet.", build.canvas_cta(6, cov))
+        cov = {"drawn": 5, "listed": 12, "missing": [{}] * 7, "unlisted": []}
+        self.assertIn("See 5 of 12 screens on the canvas", build.canvas_cta(5, cov))
+        self.assertIn("7 more are listed but not drawn yet.", build.canvas_cta(5, cov))
         self.assertIn("See all 6 screens on the canvas", build.canvas_cta(6, None))
         self.assertIn("See all 6 screens on the canvas", build.canvas_cta(6, {**cov, "missing": []}))
         self.assertEqual(build.canvas_cta(0, cov), "")
