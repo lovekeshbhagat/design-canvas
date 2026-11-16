@@ -300,6 +300,10 @@ class DerivedShare(Base):
             self.assertEqual((data["ok"], data["overMaxDerived"], data["exitCode"]), (False, True, 1))
             with self.assertRaises(mcp_server.InputError):
                 mcp_server.call_tool("design_canvas_check", {"dir": "design", "maxDerived": "ten"})
+            data = mcp_server.call_tool("design_canvas_check", {"dir": "design", "failOnContrast": True, "failOnStale": True})["structuredContent"]
+            self.assertEqual((data["contrastIssues"], data["outdated"]), ([], []))
+            with self.assertRaises(mcp_server.InputError):
+                mcp_server.call_tool("design_canvas_check", {"dir": "design", "failOnContrast": "yes"})
         finally:
             del mcp_server.ROOT
 
@@ -503,6 +507,71 @@ class AliasesAndRenames(Base):
         tw = "module.exports = { theme: { colors: {\n  accent: {\n    DEFAULT: '#748FFC',\n  },\n} } }\n"
         self.ok(self.accent("tailwind.config.js:3"), {"tailwind.config.js": tw})
         self.ok(self.accent("Colors.kt:2"), {"Colors.kt": "object AppColors {\n  val Accent = Color(0xFF748FFC)\n}\n"})
+        tw4 = "@theme {\n  --color-indigo-400: #748FFC;\n  --chart-1: #748FFC;\n}\n"
+        self.ok({"colors": {"indigo400": {"value": "#748FFC", "src": "app.css:2"}}}, {"app.css": tw4}, "red500-style keys")
+        self.ok({"colors": {"chart1": {"value": "#748FFC", "src": "app.css:3"}}}, {"app.css": tw4})
+        self.fails({"colors": {"chart2": {"value": "#748FFC", "src": "app.css:3"}}}, {"app.css": tw4},
+                   r"its src line now defines `--chart-1`, not `chart2`")
+
+
+class ModernColours(Base):
+    """CSS Color 4: oklch() (Tailwind v4, shadcn/ui), hsl() and bare HSL channels, display-p3, color-mix()."""
+
+    def test_parse(self):
+        from tokens import parse_color, to_hex
+        cases = {
+            "oklch(0.623 0.214 259.815)": "#2b7fff",  # Tailwind v4 blue-500
+            "oklch(62.3% 0.214 259.815)": "#2b7fff",
+            "oklch(0.205 0 0)": "#171717",
+            "oklab(0.623 -0.0367 -0.2109)": "#2d7fff",
+            "hsl(230 98% 61%)": "#3a5bfd",
+            "hsl(230deg, 98%, 61%)": "#3a5bfd",
+            "rgb(59 91 253)": "#3b5bfd",
+            "rgb(23% 35% 99%)": "#3b59fc",
+            "color(srgb 0.231 0.357 0.992)": "#3b5bfd",
+            "color(display-p3 1 0 0)": "#ff0000",
+            "color-mix(in srgb, #ff0000 50%, #0000ff)": "#800080",
+            "color-mix(in oklab, white, black)": "#636363",
+            "white": "#ffffff",
+        }
+        for value, want in cases.items():
+            self.assertEqual(to_hex(parse_color(value)), want, value)
+        self.assertEqual(parse_color("oklch(0.623 0.214 259.815 / 0.8)")[3], 0.8)
+        self.assertEqual(parse_color("hsla(230, 98%, 61%, 0.5)")[3], 0.5)
+        self.assertEqual(parse_color("color-mix(in srgb, #000 40%, transparent)")[3], 0.4)
+        for bad in ("oklch(0.6 0.2)", "lab(50 20 30)", "color(rec2020 1 0 0)", "nope"):
+            with self.assertRaises(ValueError, msg=bad):
+                parse_color(bad)
+
+    def test_design_json_takes_oklch(self):
+        d = make(self.tmp, {"colors": {"brand": {"value": "oklch(0.623 0.214 259.815)", "derived": "test"}}}, {})
+        self.assertEqual(d.errors, [])
+        self.assertIn("--c-brand: oklch(0.623 0.214 259.815);", d.css())
+
+    def tok(self, key, value, src):
+        return {"colors": {key: {"value": value, "src": src}}}
+
+    def test_tailwind_v4_theme(self):
+        css = "@theme {\n  --color-brand: oklch(0.623 0.214 259.815);\n  --color-ink: oklch(0.205 0 0);\n}\n"
+        self.ok(self.tok("brand", "oklch(0.623 0.214 259.815)", "app.css:2"), {"app.css": css})
+        self.ok(self.tok("brand", "#2b7fff", "app.css:2"), {"app.css": css}, "the same colour written as hex")
+        self.drifts(self.tok("ink", "#2b7fff", "app.css:3"), {"app.css": css})
+
+    def test_shadcn_bare_hsl_channels(self):
+        css = ":root {\n  --primary: 222.2 47.4% 11.2%;\n  --ring: 215 20.2% 65.1%;\n}\n"
+        self.ok(self.tok("primary", "hsl(222.2 47.4% 11.2%)", "globals.css:2"), {"globals.css": css})
+        self.ok(self.tok("primary", "#0f172a", "globals.css:2"), {"globals.css": css})
+        self.drifts(self.tok("ring", "#0f172a", "globals.css:3"), {"globals.css": css})
+
+    def test_display_p3_and_alpha(self):
+        css = ".a {\n  --overlay: oklch(0 0 0 / 0.45);\n  --accent: color(display-p3 1 0 0);\n}\n"
+        self.ok(self.tok("overlay", "rgba(0, 0, 0, 0.45)", "s.css:2"), {"s.css": css})
+        self.drifts(self.tok("overlay", "rgba(0, 0, 0, 0.6)", "s.css:2"), {"s.css": css})
+        self.ok(self.tok("accent", "#ff0000", "s.css:3"), {"s.css": css})
+
+    def test_colour_mix_in_code(self):
+        css = ":root {\n  --tint: color-mix(in srgb, #ff0000 50%, #0000ff);\n}\n"
+        self.ok(self.tok("tint", "#800080", "m.css:2"), {"m.css": css})
 
 
 class Sample(unittest.TestCase):

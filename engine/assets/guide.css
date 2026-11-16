@@ -132,6 +132,7 @@ td code { white-space: nowrap; }
 .swatch figcaption { padding: 12px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 .swatch b { font-weight: 600; color: var(--dg-fg); }
 .swatch code { align-self: flex-start; font-size: 11.5px; }
+.swatch code .hex { color: var(--dg-muted); white-space: nowrap; }
 code.code { color: var(--dg-muted); background: none; padding: 0; }
 .ratio { font: 500 12px/1.3 var(--dg-mono); color: var(--dg-muted); }
 .ratio.low { color: var(--dg-warn); }

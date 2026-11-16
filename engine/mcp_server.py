@@ -62,7 +62,11 @@ TOOLS = [
          "Compare every token in design.json with the code its `src` points at. ok:false lists drifted tokens and tokens without a src. "
          "derivedShare is the share of tokens marked derived (not checked); notChecked lists fields the code does not state.",
          {"dir": DIR, "maxDerived": {"type": "number", "minimum": 0, "maximum": 100,
-                                     "description": "Also fail (ok:false) when more than this percent of tokens are marked derived."}}),
+                                     "description": "Also fail (ok:false) when more than this percent of tokens are marked derived."},
+          "failOnContrast": {"type": "boolean", "default": False,
+                             "description": "Also fail when a text colour misses its contrast target (contrastIssues lists them)."},
+          "failOnStale": {"type": "boolean", "default": False,
+                          "description": "Also fail when a drawn screen may be out of date: its source has a newer git commit (outdated lists them)."}}),
     tool("design_canvas_build", "Build", "Write out/guide.html, out/canvas.html and the token files in the design folder.",
          {"dir": DIR, "noWebFonts": {"type": "boolean", "default": False, "description": "Don't load fonts from Google Fonts."}},
          annotations=WRITES),
@@ -187,7 +191,11 @@ def call_tool(name: str, args) -> dict:
         cap = args.get("maxDerived")
         if cap is not None and (isinstance(cap, bool) or not isinstance(cap, (int, float)) or not 0 <= cap <= 100):
             raise InputError("maxDerived must be a number from 0 to 100")
-        data = run(d, ["--check"] + (["--max-derived", str(cap)] if cap is not None else []))
+        flags = [f for f, key in (("--fail-on-contrast", "failOnContrast"), ("--fail-on-stale", "failOnStale")) if args.get(key) is True]
+        for key in ("failOnContrast", "failOnStale"):
+            if key in args and not isinstance(args[key], bool):
+                raise InputError(f"{key} must be true or false")
+        data = run(d, ["--check"] + (["--max-derived", str(cap)] if cap is not None else []) + flags)
     elif name == "design_canvas_build":
         data = run(d, ["--no-web-fonts"] if args.get("noWebFonts") is True else [])
     elif name == "design_canvas_reviews":

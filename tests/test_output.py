@@ -11,6 +11,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+import contextlib
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -185,9 +186,19 @@ class Contrast(Base):
         texty = {k for k in names if d.is_texty(k)}
         self.assertEqual(texty, {"primaryText", "labelSecondary", "onSurface", "on_brand", "fg", "foregroundMuted", "grouped", "optedIn"})
 
-    def test_text_flag_must_be_a_boolean(self):
+    def test_text_flag_must_be_a_boolean_or_large(self):
         d = self.design({"colors": {"x": {"value": "#111111", "text": "yes"}}})
-        self.assertIn("colors.x.text: use true or false", d.errors)
+        self.assertIn('colors.x.text: use true, false or "large"', d.errors)
+
+    def test_large_text_needs_3_to_1(self):
+        grey = {"value": "#8A8A8A", "group": "Text"}  # 3.45:1 on white
+        d = self.design({"colors": {"caption": dict(grey), "display": dict(grey, text="large")}})
+        self.assertEqual(d.errors, [])
+        self.assertEqual(d.contrast_problems(), ["`caption` on `bg` is 3.45:1 in the default theme (text needs 4.5:1)"])
+        self.assertIn('class="ratio low"', build.ratio_html(d, "caption"))
+        self.assertNotIn("low", build.ratio_html(d, "display"))
+        d = self.design({"colors": {"display": dict(grey, value="#AAAAAA", text="large")}})
+        self.assertEqual(d.contrast_problems(), ["`display` on `bg` is 2.32:1 in the default theme (large text needs 3:1)"])
 
     def test_cards_show_a_ratio_only_for_text(self):
         d = self.design({"colors": {"sun": "#FFE7A3", "badgeText": {"value": "#102A43", "on": ["sun"]}}})
@@ -231,6 +242,22 @@ class ContrastListing(Base):
         self.assertIn("CONTRAST: faint on bg is 1.92:1", out)
         code, out = self.run_cli(self.write({}), "--validate", "--json")
         self.assertEqual(json.loads(out)["contrastIssues"], [])
+
+    def test_check_can_fail_on_contrast(self):
+        path = self.write(self.LOW)
+        code, out = self.run_cli(path, "--check", "--json")
+        self.assertEqual((code, "contrastIssues" in json.loads(out)), (0, False), "off by default")
+        code, out = self.run_cli(path, "--check", "--fail-on-contrast", "--json")
+        res = json.loads(out)
+        self.assertEqual((code, res["ok"]), (1, False))
+        self.assertEqual(res["contrastIssues"], ["faint on bg is 1.92:1 in the default theme (text needs 4.5:1)"])
+        code, out = self.run_cli(path, "--check", "--fail-on-contrast")
+        self.assertIn("CONTRAST: faint on bg is 1.92:1", out)
+        self.assertIn(", 1 contrast issue(s)", out)
+        code, _ = self.run_cli(self.write({}), "--check", "--fail-on-contrast")
+        self.assertEqual(code, 0)
+        with self.assertRaises(SystemExit), redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            build.main([str(path), "--fail-on-contrast"])
 
 
 # ---------------------------------------------------------------- 5. guide UI at scale
@@ -327,6 +354,46 @@ class UndefinedVars(Base):
         self.assertIn("warning: parts.css:2: var(--c-tag-3) is not defined in design.json (did you mean --c-tag3?)", out)
 
 
+# ---------------------------------------------------------------- hand-typed values instead of tokens
+class HandTyped(Base):
+    design_tokens = {"colors": {"accent": "#7A9E2C"}, "spacing": {"xs": 4, "md": 12}, "radii": {"card": 16},
+                     "fonts": {"body": {"family": "Inter"}}, "type": {"body": {"font": "body", "size": 16, "lineHeight": 22}}}
+
+    def test_colours_and_sizes_that_match_a_token(self):
+        path = self.write(self.design_tokens, {
+            "parts.css": "/* #000 in a comment is fine */\n.p-a { color: #7A9E2C; padding: 12px 4px; }\n"
+                         ".p-b { background: rgb(1 2 3); border-radius: 16px; gap: var(--s-md, 12px); }\n"
+                         ".p-c { font: 600 16px/22px var(--f-body); margin: 0 0 7px; }\n",
+            "canvas/frames/home/home.html": '<div style="color: oklch(0.6 0.2 250); width: 12px">#7A9E2C as text</div>\n'
+                                            '<style>\n.x { gap: 4px; }\n</style>\n',
+        })
+        h = build.hand_typed(Design(path))
+        self.assertEqual(h["colours"], [
+            "parts.css:2: hand-typed colour #7A9E2C in color (is colors.accent; use var(--c-accent))",
+            "parts.css:3: hand-typed colour rgb(1 2 3) in background (no token has this colour)",
+            "canvas/frames/home/home.html:1: hand-typed colour oklch(0.6 0.2 250) in color (no token has this colour)",
+        ])
+        self.assertEqual(h["matchesToken"], [
+            "parts.css:2: 12px in padding is spacing.md; use var(--s-md)",
+            "parts.css:2: 4px in padding is spacing.xs; use var(--s-xs)",
+            "parts.css:3: 16px in border-radius is radii.card; use var(--r-card)",
+            "parts.css:4: 16px in font is type.body; use var(--t-body) for the whole font",
+            "canvas/frames/home/home.html:3: 4px in gap is spacing.xs; use var(--s-xs)",
+        ])
+        self.assertEqual(h["otherSizes"], 1, "margin 7px has no token; width is not a token property; var() fallbacks are fine")
+        code, out = self.run_cli(path)
+        self.assertIn("warning: parts.css:2: hand-typed colour #7A9E2C in color (is colors.accent; use var(--c-accent))", out)
+        self.assertIn("note: 1 other hand-typed size(s) have no matching token; Inspect marks them off-system", out)
+        code, out = self.run_cli(path, "--validate", "--json")
+        self.assertEqual(len(json.loads(out)["handTyped"]["matchesToken"]), 5)
+
+    def test_long_lists_are_cut_in_text_output(self):
+        css = "".join(f".p{i} {{ color: #7A9E2C; }}\n" for i in range(14))
+        lines = build.hand_typed_lines(build.hand_typed(self.design(self.design_tokens, {"parts.css": css})))
+        self.assertEqual(len(lines), 11)
+        self.assertIn("… and 4 more hand-typed value(s)", lines[-1])
+
+
 # ---------------------------------------------------------------- D. how token names become CSS variables
 class CssNames(Base):
     def test_kebab_adds_no_hyphen_before_a_digit(self):
@@ -345,6 +412,7 @@ class SampleOutput(unittest.TestCase):
             self.assertEqual(build.main([str(SAMPLE), "--validate", "--json"]), 0)
         res = json.loads(buf.getvalue())
         self.assertEqual((res["warnings"], res["contrastIssues"]), ([], []))
+        self.assertEqual((res["handTyped"]["colours"], res["handTyped"]["matchesToken"]), ([], []))
         d = Design(SAMPLE)
         self.assertEqual([f for f, _ in d.pairs("primary")], ["bg", "surface"])
         self.assertNotIn("success", d.text_colors())

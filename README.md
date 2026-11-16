@@ -61,7 +61,7 @@ The engine itself is plain and predictable: it draws what the agent wrote and ch
 - **Lives in your repo**: the design, the screens and every review are files, versioned with your code.
 - The only cost is your coding agent's own usage while it reads your code and writes the design.
 
-> Status: early. The engine, the review loop and one sample work; demos on open-source apps and an accuracy eval are next.
+> Status: early (v0.1.0, see [CHANGELOG.md](CHANGELOG.md)). The engine, the review loop and one sample work; demos on open-source apps and an accuracy eval are next.
 
 ## Get started
 
@@ -120,7 +120,7 @@ Each person writes only their own file in `reviews/`, so git never conflicts. Re
 | Guide, canvas, token export, inspect and comments | Any platform: built from `design.json` and the screens alone. |
 | Screen list, coverage and screenshot overlay | Any platform. `--shoot` (one screen as a PNG) needs Chrome, Chromium or Edge installed. |
 | System icons (SF Symbols, Material Symbols) | Shown as labelled placeholders with the symbol's name. Their artwork is never copied. |
-| Drift check (`--check`) | JS/TS theme objects and Tailwind configs, CSS custom properties, iOS `.colorset` files, SwiftUI and UIKit colours (including `Color(hex:)` and hex strings), sizes, weights, shadows, durations in seconds and springs (`response`, `dampingFraction`), Android XML resources, Flutter and Compose `Color(0x…)`. Each format has a test in `tests/`. For other formats the check reads the `src` line itself, then the nearest definition of the token's name within 8 lines. |
+| Drift check (`--check`) | JS/TS theme objects and Tailwind configs, CSS custom properties (including `oklch()`, `hsl()`, `color(display-p3 …)`, `color-mix()` and shadcn-style bare HSL channels), iOS `.colorset` files, SwiftUI and UIKit colours (including `Color(hex:)` and hex strings), sizes, weights, shadows, durations in seconds and springs (`response`, `dampingFraction`), Android XML resources, Flutter and Compose `Color(0x…)`. Each format has a test in `tests/`. For other formats the check reads the `src` line itself, then the nearest definition of the token's name within 8 lines. |
 | "Used in" lists | JavaScript and TypeScript imports only, for now. |
 | Samples | One made-up React Native app so far. |
 
@@ -153,7 +153,13 @@ Nothing is skipped silently:
 - A value the code doesn't state (a weight left at the platform default) is listed as "not checked".
 - A token with neither `src` nor `derived` fails the check.
 
-The build also warns about a token variable that `design.json` doesn't define (a typo like `var(--c-tag-3)`), and about a screen whose source file changed after it was drawn.
+In CI, two more options make the check stricter: `--fail-on-contrast` fails when a text colour misses its contrast target (4.5:1, or 3:1 for colours marked as large text), and `--fail-on-stale` fails when a drawn screen's source changed after it was drawn.
+
+```bash
+python3 engine/build.py design-canvas --check --max-derived 10 --fail-on-contrast --fail-on-stale
+```
+
+The build also warns about a token variable that `design.json` doesn't define (a typo like `var(--c-tag-3)`), about a hand-typed colour or a token-sized value (`gap: 4px` where `spacing.xs` is 4) in `parts.css` or a screen, and about a screen whose source file changed after it was drawn.
 
 ## Privacy
 

@@ -81,7 +81,7 @@
                       { "type": "object", "minProperties": 1, "additionalProperties": { "$ref": "#/$defs/tokenNames" } }
                     ]
                   },
-                  "text": { "type": "boolean", "description": "true: check this colour's contrast as text; false: never. Only needed when the name and roles get it wrong." }
+                  "text": { "oneOf": [{ "type": "boolean" }, { "const": "large" }], "description": "true: check this colour's contrast as text (4.5:1); \"large\": it is only used for large text, at least 24px or 18.66px bold (3:1); false: never. Only needed when the name and roles get it wrong, or for large text." }
                 }
               }
             ]
@@ -232,7 +232,7 @@
         { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
       ]
     },
-    "hexOrRgba": { "type": "string", "pattern": "^(#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})|rgba?\\(.*\\)|transparent)$" },
+    "hexOrRgba": { "type": "string", "pattern": "^(#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})|(rgba?|hsla?|oklch|oklab|color|color-mix)\\(.*\\)|transparent|white|black|red|green|blue|gray|grey|silver|yellow|orange|purple)$", "description": "A hex colour, a CSS colour function (rgb, hsl, oklch, oklab, color(srgb | srgb-linear | display-p3 …), color-mix) or a basic colour name." },
     "colorValue": {
       "oneOf": [
         { "$ref": "#/$defs/hexOrRgba" },

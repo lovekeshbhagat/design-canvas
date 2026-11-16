@@ -55,10 +55,14 @@ def num(v) -> str:
 
 # ---------------------------------------------------------------- colour maths
 def parse_color(v: str):
-    """'#rgb' | '#rrggbb' | '#rrggbbaa' | 'rgb(a)(...)' | 'transparent' -> (r, g, b, a)"""
-    s = v.strip().lower()
+    """A CSS colour -> (r, g, b, a) with r, g, b as 0-255 integers (clipped to sRGB) and a as 0-1.
+    Takes '#rgb', '#rrggbb', '#rrggbbaa', 'transparent', and the CSS Color 4 functions rgb(), hsl(), oklch(),
+    oklab(), color(srgb | srgb-linear | display-p3 ...) and color-mix(in <space>, a [p%], b [p%])."""
+    s = str(v).strip().lower()
     if s == "transparent":
         return (0, 0, 0, 0.0)
+    if s in _CSS_NAMES:
+        s = _CSS_NAMES[s]
     if s.startswith("#"):
         h = s[1:]
         if len(h) == 3:
@@ -67,13 +71,207 @@ def parse_color(v: str):
             raise ValueError(f"bad hex colour {v!r}")
         a = int(h[6:8], 16) / 255 if len(h) == 8 else 1.0
         return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), round(a, 4))
-    m = re.fullmatch(r"rgba?\(([^)]*)\)", s.replace(" ", ""))
-    if m:
-        parts = re.split(r"[,/]", m.group(1))
-        r, g, b = (int(round(float(x))) for x in parts[:3])
-        a = float(parts[3].rstrip("%")) / (100 if parts[3].endswith("%") else 1) if len(parts) > 3 else 1.0
-        return (r, g, b, a)
-    raise ValueError(f"unsupported colour {v!r} (use hex or rgba())")
+    r, g, b, a = _color_fn(s, v)
+    return (_byte(r), _byte(g), _byte(b), round(min(1.0, max(0.0, a)), 4))
+
+
+_CSS_NAMES = {"white": "#ffffff", "black": "#000000", "red": "#ff0000", "green": "#008000", "blue": "#0000ff",
+              "gray": "#808080", "grey": "#808080", "silver": "#c0c0c0", "yellow": "#ffff00", "orange": "#ffa500",
+              "purple": "#800080"}
+
+# -- CSS Color 4 functions, as sRGB floats 0-1 (gamma encoded, not yet clipped)
+_FN = re.compile(r"^(rgba?|hsla?|oklch|oklab|color|color-mix)\((.*)\)$", re.S)
+
+
+def _byte(c):
+    return int(round(min(1.0, max(0.0, c)) * 255))
+
+
+def _num(tok, pct_of=1.0):
+    """'0.5' -> 0.5, '50%' -> 0.5 * pct_of, 'none' -> 0."""
+    tok = tok.strip()
+    if tok == "none":
+        return 0.0
+    if tok.endswith("%"):
+        return float(tok[:-1]) / 100 * pct_of
+    return float(tok)
+
+
+def _hue(tok):
+    tok = tok.strip()
+    if tok == "none":
+        return 0.0
+    for unit, k in (("deg", 1.0), ("grad", 0.9), ("rad", 180 / math.pi), ("turn", 360.0)):
+        if tok.endswith(unit):
+            return float(tok[: -len(unit)]) * k
+    return float(tok)
+
+
+def _split_args(body):
+    """'a b c / d' or 'a, b, c, d' -> ([a, b, c], d or None), respecting nested brackets."""
+    parts, depth, cur = [], 0, ""
+    for ch in body:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if depth == 0 and (ch in ", /" or ch.isspace()):
+            if cur:
+                parts.append(cur)
+                cur = ""
+            if ch == "/":
+                parts.append("/")
+            continue
+        cur += ch
+    if cur:
+        parts.append(cur)
+    alpha = None
+    if "/" in parts:
+        i = parts.index("/")
+        alpha = parts[i + 1] if i + 1 < len(parts) else None
+        parts = parts[:i]
+    elif len(parts) == 4:  # legacy rgba(r, g, b, a)
+        parts, alpha = parts[:3], parts[3]
+    return parts, alpha
+
+
+def _enc(c):  # linear -> gamma (sRGB transfer, sign kept)
+    a = abs(c)
+    return math.copysign(12.92 * a if a <= 0.0031308 else 1.055 * a ** (1 / 2.4) - 0.055, c)
+
+
+def _dec(c):  # gamma -> linear
+    a = abs(c)
+    return math.copysign(a / 12.92 if a <= 0.04045 else ((a + 0.055) / 1.055) ** 2.4, c)
+
+
+def _oklab_to_srgb(L, a, b):
+    l_ = L + 0.3963377774 * a + 0.2158037573 * b
+    m_ = L - 0.1055613458 * a - 0.0638541728 * b
+    s_ = L - 0.0894841775 * a - 1.2914855480 * b
+    l, m, s = l_ ** 3, m_ ** 3, s_ ** 3
+    return tuple(_enc(x) for x in (4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+                                   -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+                                   -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s))
+
+
+def _srgb_to_oklab(r, g, b):
+    r, g, b = _dec(r), _dec(g), _dec(b)
+    cb = lambda x: math.copysign(abs(x) ** (1 / 3), x)  # noqa: E731
+    l = cb(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+    m = cb(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+    s = cb(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+    return (0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+            1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+            0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s)
+
+
+def _hsl_to_srgb(h, s, l):
+    h = (h % 360) / 30
+    k = [(n + h) % 12 for n in (0, 8, 4)]
+    a = s * min(l, 1 - l)
+    return tuple(l - a * max(-1, min(x - 3, 9 - x, 1)) for x in k)
+
+
+def _color_fn(s, original=None):
+    """sRGB floats (r, g, b, a) for one CSS colour function, or ValueError."""
+    if s.startswith("#") or s == "transparent" or s in _CSS_NAMES:
+        r, g, b, a = parse_color(s)
+        return (r / 255, g / 255, b / 255, a)
+    m = _FN.match(s.strip())
+    if not m:
+        raise ValueError(f"unsupported colour {original or s!r} (use hex, rgb(), hsl(), oklch(), oklab(), color() or color-mix())")
+    name, body = m.group(1), m.group(2)
+    try:
+        if name == "color-mix":
+            return _mix(body)
+        if name == "color":
+            space, *rest = body.split(None, 1)
+            args, alpha = _split_args(rest[0] if rest else "")
+            if space not in ("srgb", "srgb-linear", "display-p3") or len(args) != 3:
+                raise ValueError
+            c = [_num(x) for x in args]
+            if space == "srgb-linear":
+                c = [_enc(x) for x in c]
+            elif space == "display-p3":
+                r, g, b = (_dec(x) for x in c)
+                c = [_enc(1.2249401 * r - 0.2249404 * g),
+                     _enc(-0.0420569 * r + 1.0420571 * g),
+                     _enc(-0.0196376 * r - 0.0786361 * g + 1.0982735 * b)]
+        else:
+            args, alpha = _split_args(body)
+            if len(args) != 3:
+                raise ValueError
+            if name.startswith("rgb"):
+                c = [_num(x, 255) / 255 if x.strip().endswith("%") else _num(x) / 255 for x in args]
+            elif name.startswith("hsl"):
+                c = list(_hsl_to_srgb(_hue(args[0]), _num(args[1].rstrip("%")) / 100 if not args[1].endswith("%") else _num(args[1]),
+                                      _num(args[2].rstrip("%")) / 100 if not args[2].endswith("%") else _num(args[2])))
+            elif name == "oklab":
+                c = list(_oklab_to_srgb(_num(args[0]), _num(args[1], 0.4), _num(args[2], 0.4)))
+            else:  # oklch
+                L, C, h = _num(args[0]), _num(args[1], 0.4), math.radians(_hue(args[2]))
+                c = list(_oklab_to_srgb(L, C * math.cos(h), C * math.sin(h)))
+        a = 1.0 if alpha is None else _num(alpha)
+        return (c[0], c[1], c[2], a)
+    except (ValueError, IndexError, ZeroDivisionError):
+        raise ValueError(f"bad colour {original or s!r}") from None
+
+
+def _mix(body):
+    """color-mix(in srgb | srgb-linear | oklab | oklch [shorter hue], A [p%], B [p%])."""
+    parts, depth, cur = [], 0, ""
+    for ch in body:
+        depth += ch == "("
+        depth -= ch == ")"
+        if ch == "," and depth == 0:
+            parts.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    parts.append(cur.strip())
+    if len(parts) != 3 or not parts[0].startswith("in "):
+        raise ValueError
+    space = parts[0][3:].split()[0]
+
+    def item(x):
+        m = re.match(r"^(.*?)(?:\s+([\d.]+)%)?$", x, re.S)
+        return _color_fn(m.group(1).strip()), (float(m.group(2)) / 100 if m.group(2) else None)
+
+    (c1, p1), (c2, p2) = item(parts[1]), item(parts[2])
+    if p1 is None and p2 is None:
+        p1 = p2 = 0.5
+    elif p1 is None:
+        p1 = 1 - p2
+    elif p2 is None:
+        p2 = 1 - p1
+    total = p1 + p2
+    if total <= 0:
+        raise ValueError
+    w1, w2 = p1 / total, p2 / total
+    alpha = c1[3] * w1 + c2[3] * w2
+    if space == "srgb":
+        rgb = [c1[i] * w1 + c2[i] * w2 for i in range(3)]
+    elif space == "srgb-linear":
+        rgb = [_enc(_dec(c1[i]) * w1 + _dec(c2[i]) * w2) for i in range(3)]
+    elif space in ("oklab", "oklch"):
+        a1, a2 = _srgb_to_oklab(*c1[:3]), _srgb_to_oklab(*c2[:3])
+        if space == "oklab":
+            lab = [a1[i] * w1 + a2[i] * w2 for i in range(3)]
+        else:
+            ch1, ch2 = math.hypot(a1[1], a1[2]), math.hypot(a2[1], a2[2])
+            h1, h2 = math.atan2(a1[2], a1[1]), math.atan2(a2[2], a2[1])
+            if ch1 < 1e-6:
+                h1 = h2
+            if ch2 < 1e-6:
+                h2 = h1
+            dh = (h2 - h1 + math.pi) % (2 * math.pi) - math.pi  # shorter hue
+            h, ch = h1 + dh * w2, ch1 * w1 + ch2 * w2
+            lab = [a1[0] * w1 + a2[0] * w2, ch * math.cos(h), ch * math.sin(h)]
+        rgb = list(_oklab_to_srgb(*lab))
+    else:
+        raise ValueError
+    return (rgb[0], rgb[1], rgb[2], alpha * min(1.0, total))
 
 
 def to_hex(rgba) -> str:
@@ -183,8 +381,8 @@ class Design:
             return None
 
         for k, meta in self.colors.items():
-            if "text" in meta and not isinstance(meta["text"], bool):
-                self.errors.append(f"colors.{k}.text: use true or false")
+            if "text" in meta and not isinstance(meta["text"], bool) and meta["text"] != "large":
+                self.errors.append(f"colors.{k}.text: use true, false or \"large\"")
             on = meta.get("on")
             if on is None:
                 continue
@@ -610,6 +808,8 @@ class Design:
         meta = self.colors[token]
         if isinstance(meta.get("text"), bool):
             return meta["text"]
+        if meta.get("text") == "large":
+            return True
         if meta.get("on") is not None:
             return True
         roles = {r: self.roles.get(r) for r in TEXT_ROLES + FILL_ROLES}
@@ -628,13 +828,19 @@ class Design:
     def text_colors(self):
         return [k for k in self.colors if self.is_texty(k)]
 
+    def min_contrast(self, token):
+        """WCAG AA: 4.5:1 for text, 3:1 for large text (`"text": "large"`: at least 24px, or 18.66px bold)."""
+        return 3.0 if self.colors.get(token, {}).get("text") == "large" else 4.5
+
     def contrast_problems(self):
         out = []
         for k in self.text_colors():
+            need = self.min_contrast(k)
+            what = "large text needs 3:1" if need == 3.0 else "text needs 4.5:1"
             for on, rs in self.pairs(k):
                 for t, r in rs.items():
-                    if r < 4.5:
-                        out.append(f"`{k}` on `{on}` is {r}:1 in the {t} theme (text needs 4.5:1)")
+                    if r < need:
+                        out.append(f"`{k}` on `{on}` is {r}:1 in the {t} theme ({what})")
         return out
 
     # ------------------------------------------------------------ drift check
@@ -1260,8 +1466,9 @@ _FIELD_KEYS = {
 
 
 def _words(name):
-    """`--c-onPrimary` -> ['c', 'on', 'primary']."""
+    """`--c-onPrimary` -> ['c', 'on', 'primary']; `red500` -> ['red', '500']."""
     name = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", name.lstrip("-$"))
+    name = re.sub(r"([A-Za-z])(\d)", r"\1 \2", name)
     return [w.lower() for w in re.split(r"[\s_.\-]+", name) if w]
 
 
@@ -1384,12 +1591,48 @@ def _named(text):
     return out
 
 
+_CSS_FN_START = re.compile(r"(?<![\w$.-])(rgba?|hsla?|oklch|oklab|color-mix|color)\(")
+# shadcn-style bare HSL channels: `--primary: 222.2 47.4% 11.2%;`
+_BARE_HSL = re.compile(r"(?<![\w.#%-])(-?\d+(?:\.\d+)?)(?:deg)?\s+(\d+(?:\.\d+)?)%\s+(\d+(?:\.\d+)?)%(?:\s*/\s*(\d*\.?\d+%?))?")
+
+
+@lru_cache(maxsize=4096)
+def _css_colors(text):
+    """Every CSS colour function (and bare HSL triple) written in `text`, as ((r, g, b, a), alpha written)."""
+    out = []
+    for m in _CSS_FN_START.finditer(text):
+        depth, k = 0, m.end() - 1
+        while k < len(text):
+            depth += text[k] == "("
+            depth -= text[k] == ")"
+            if depth == 0:
+                break
+            k += 1
+        chunk = text[m.start():k + 1]
+        try:
+            rgba = parse_color(chunk)
+        except ValueError:
+            continue
+        args = chunk[chunk.index("(") + 1:-1]
+        out.append((rgba, "/" in args or (m.group(1) in ("rgba", "hsla", "rgb", "hsl") and args.count(",") == 3)))
+    for m in _BARE_HSL.finditer(text):
+        alpha = f" / {m.group(4)}" if m.group(4) else ""
+        try:
+            out.append((parse_color(f"hsl({m.group(1)} {m.group(2)}% {m.group(3)}%{alpha})"), bool(alpha)))
+        except ValueError:
+            pass
+    return tuple(out)
+
+
 def _has_color(text, rgba) -> bool:
     want = to_hex(rgba)[1:]
     if want in {h for h, _ in _hexes(text)}:
         return True
     r, g, b = rgba[:3]
     if re.search(rf"(?<!\d){r}\D{{1,6}}{g}\D{{1,6}}{b}(?!\d)", text):
+        return True
+    # oklch(), hsl(), color(display-p3 …), color-mix() and bare HSL channels: converted, so allow rounding
+    if any(all(abs(x - y) <= 2 for x, y in zip(c[:3], (r, g, b))) for c, _ in _css_colors(text)):
         return True
     # iOS .colorset JSON ("red" : "0x3B" / "0.231" / "59"), SwiftUI Color(red: 0.231, ...), UIColor(red: 59/255, ...),
     # and named black / white
@@ -1398,7 +1641,8 @@ def _has_color(text, rgba) -> bool:
 
 def _colors_in(text) -> bool:
     """Is any colour written here at all?"""
-    return bool(_hexes(text) or re.search(r"(?:rgba?|hsla?)\(", text, re.I) or _components(text) or _named(text) or _CLEAR.search(text))
+    return bool(_hexes(text) or re.search(r"(?:rgba?|hsla?)\(", text, re.I) or _css_colors(text) or _components(text)
+                or _named(text) or _CLEAR.search(text))
 
 
 def _alphas_in(text):
@@ -1411,6 +1655,7 @@ def _alphas_in(text):
             except ValueError:
                 pass
     vals += [a for _, a in _hexes(text) if a is not None]
+    vals += [c[3] for c, written in _css_colors(text) if written]
     if _CLEAR.search(text):
         vals.append(0.0)
     return vals

@@ -40,7 +40,7 @@ sys.path.insert(0, str(HERE))
 import reviews  # noqa: E402
 import screens as screens_mod  # noqa: E402
 from markdown import Doc, front_matter, slug  # noqa: E402
-from tokens import Design, esc, kebab, num, to_hex  # noqa: E402
+from tokens import Design, esc, kebab, num, parse_color, to_hex  # noqa: E402
 
 ASSETS = HERE / "assets"
 PART_WORDS = re.compile(r"atom|molecule|organism|template|page|component|pattern", re.I)
@@ -81,7 +81,7 @@ def ratio_html(d: Design, k: str) -> str:
         return ""
     out = []
     for fill, rs in d.pairs(k):
-        low = " low" if any(r < 4.5 for r in rs.values()) else ""
+        low = " low" if any(r < d.min_contrast(k) for r in rs.values()) else ""
         if len(rs) > 3:  # many themes: the range, with every theme on hover
             lo, hi = min(rs.values()), max(rs.values())
             worst = min(rs, key=rs.get)
@@ -111,7 +111,11 @@ def view_colors(d: Design) -> str:
             if varies:
                 per = '<span class="per">' + "".join(
                     f'<i title="{esc(t)}: {esc(c["values"][t])}" style="background:{swatch_cell(c["rgba"][t])}"></i>' for t in d.theme_ids) + "</span>"
-            vals = " · ".join(f"{esc(t)} {esc(c['values'][t])}" for t in d.theme_ids) if varies else esc(c["values"][d.default])
+            def shown(t):  # oklch(…) and friends also show the hex they convert to
+                v = str(c["values"][t])
+                plain_rgb = v.startswith("#") or v.lower().startswith("rgb") or v.lower() == "transparent"
+                return esc(v) + ("" if plain_rgb or t not in c["rgba"] else f' <span class="hex">≈ {to_hex(c["rgba"][t])}</span>')
+            vals = " · ".join(f"{esc(t)} {shown(t)}" for t in d.theme_ids) if varies else shown(d.default)
             cells.append(
                 f'<figure class="swatch"><div class="chip" style="background:var(--c-{kebab(k)})">{per}</div>'
                 f'<figcaption><b>{esc(k)}</b><code>{vals}</code>'
@@ -227,7 +231,8 @@ def view_contrast(d: Design) -> str:
     texts = d.text_colors()
     which = ('<p class="note">Checked as text: ' + ", ".join(f"<code>{esc(k)}</code>" for k in texts) + ".</p>") if texts else ""
     if not probs:
-        return '<p class="ok">Every text colour reaches 4.5:1 on the colour it is read on, in every theme.</p>' + which
+        return ('<p class="ok">Every text colour reaches its target on the colour it is read on, in every theme '
+                '(4.5:1, or 3:1 for colours marked as large text).</p>' + which)
     return '<ul class="drift">' + "".join(f"<li>{inline_code(p)}</li>" for p in probs) + "</ul>" + which
 
 
@@ -710,6 +715,100 @@ def undefined_vars(d: Design) -> list:
     return out
 
 
+# ---------------------------------------------------------------- hand-typed values in parts and screens
+COLOUR_PROPS = {"color", "background", "background-color", "border", "border-top", "border-right", "border-bottom",
+                "border-left", "border-color", "outline", "outline-color", "fill", "stroke", "box-shadow", "text-shadow",
+                "caret-color", "accent-color", "text-decoration", "text-decoration-color", "column-rule"}
+SIZE_PROPS = {"padding": "spacing", "margin": "spacing", "gap": "spacing", "row-gap": "spacing", "column-gap": "spacing",
+              "border-radius": "radii", "font-size": "type", "font": "type"}
+for _side in ("top", "right", "bottom", "left", "inline", "block", "inline-start", "inline-end", "block-start", "block-end"):
+    SIZE_PROPS[f"padding-{_side}"] = SIZE_PROPS[f"margin-{_side}"] = "spacing"
+for _corner in ("top-left", "top-right", "bottom-left", "bottom-right"):
+    SIZE_PROPS[f"border-{_corner}-radius"] = "radii"
+DECL = re.compile(r"(?<![\w-])([a-z][a-z-]*)\s*:\s*([^;{}\"]+)")
+RAW_COLOUR = re.compile(r"#[0-9a-fA-F]{3,8}\b|(?:rgba?|hsla?|oklch|oklab|color-mix|color)\([^()]*(?:\([^()]*\)[^()]*)*\)")
+RAW_PX = re.compile(r"(?<![\w.-])(\d*\.?\d+)px\b")
+VAR_CALL = re.compile(r"var\([^()]*(?:\([^()]*\)[^()]*)*\)")
+
+
+def _style_texts(path: Path, text: str):
+    """(line number, CSS text) for each line: whole lines of a .css file; style="…" attributes and <style> blocks of HTML."""
+    in_style, in_comment = path.suffix == ".css", False
+    for i, line in enumerate(text.splitlines(), 1):
+        if path.suffix == ".css":
+            if in_comment:
+                if "*/" not in line:
+                    continue
+                line, in_comment = line.split("*/", 1)[1], False
+            line = re.sub(r"/\*.*?\*/", "", line)
+            if "/*" in line:
+                line, in_comment = line.split("/*", 1)[0], True
+            yield i, line
+            continue
+        chunks = re.findall(r"""\bstyle\s*=\s*["']([^"']*)["']""", line)
+        if re.search(r"<style\b", line, re.I):
+            in_style = True
+        if in_style:
+            chunks.append(re.sub(r"<[^>]*>", " ", line))
+        if re.search(r"</style\s*>", line, re.I):
+            in_style = False
+        for c in chunks:
+            yield i, c
+
+
+def hand_typed(d: Design) -> dict:
+    """Values typed by hand in parts.css and the canvas files, where a token should be used. Returns
+    {"colours": [...], "matchesToken": [...], "otherSizes": n}: every hand-typed colour, every size that equals a
+    token (a likely slip), and a count of other sizes (one-offs; Inspect marks them off-system)."""
+    files = [d.dir / "parts.css"]
+    for pattern in ("canvas/css/*.css", "canvas/partials/*.html", "canvas/frames/*/*.html"):
+        files += sorted(d.dir.glob(pattern))
+    pools = {"spacing": {k: v["value"] for k, v in d.spacing.items()}, "radii": {k: v["value"] for k, v in d.radii.items()},
+             "type": {k: v["size"] for k, v in d.type.items()}}
+    prefix = {"spacing": "--s-", "radii": "--r-", "type": "--t-"}
+    colours, matches, other = [], [], 0
+    for f in files:
+        if not f.is_file():
+            continue
+        rel = f.relative_to(d.dir).as_posix()
+        for line_no, css in _style_texts(f, f.read_text(encoding="utf-8", errors="replace")):
+            for m in DECL.finditer(css):
+                prop, value = m.group(1).lower(), VAR_CALL.sub(" ", m.group(2))
+                if prop in COLOUR_PROPS:
+                    for lit in RAW_COLOUR.findall(value):
+                        try:
+                            rgba = parse_color(lit)
+                        except ValueError:
+                            continue
+                        same = next((k for k, c in d.colors.items() if rgba in c["rgba"].values()), None)
+                        hint = f"is colors.{same}; use var(--c-{kebab(same)})" if same else "no token has this colour"
+                        colours.append(f"{rel}:{line_no}: hand-typed colour {lit} in {prop} ({hint})")
+                group = SIZE_PROPS.get(prop)
+                if not group:
+                    continue
+                for pm in RAW_PX.finditer(value):
+                    px, n = pm.group(1), float(pm.group(1))
+                    if n == 0 or (prop == "font" and value[:pm.start()].rstrip().endswith("/")):  # font: 15px/20px -> the size only
+                        continue
+                    same = next((k for k, v in pools[group].items() if v == n), None)
+                    if same:
+                        use = f"var({prefix[group]}{kebab(same)})" if group != "type" else f"var(--t-{kebab(same)}) for the whole font"
+                        matches.append(f"{rel}:{line_no}: {px}px in {prop} is {group}.{same}; use {use}")
+                    else:
+                        other += 1
+    return {"colours": colours, "matchesToken": matches, "otherSizes": other}
+
+
+def hand_typed_lines(h: dict, limit: int = 10) -> list:
+    items = h["colours"] + h["matchesToken"]
+    out = [f"warning: {x}" for x in items[:limit]]
+    if len(items) > limit:
+        out.append(f"warning: … and {len(items) - limit} more hand-typed value(s) (see handTyped in --json)")
+    if h["otherSizes"]:
+        out.append(f"note: {h['otherSizes']} other hand-typed size(s) have no matching token; Inspect marks them off-system")
+    return out
+
+
 def build_all(d: Design, root: Path, out: Path, web: bool = True) -> tuple[dict, list]:
     """Write guide, canvas and tokens to `out`. Returns (summary for --json, text lines)."""
     raw_c, raw_u, review_files, review_errors = reviews.load_raw(d.dir)
@@ -739,6 +838,7 @@ def build_all(d: Design, root: Path, out: Path, web: bool = True) -> tuple[dict,
     lines += [f"missing: {m}" for m in missing + guide_missing] + [f"review: {e}" for e in review_errors]
     lines += [f"CONTRAST: {plain(p)}" for p in d.contrast_problems()]
     warnings = d.warnings + undefined_vars(d)
+    typed = hand_typed(d)
     summary = {
         "ok": True, "out": str(out), "files": files, "screens": n_frames, "tokens": d.count(),
         "drift": [plain(p) for p in drift_result[0]] if drift_result else None,
@@ -748,13 +848,13 @@ def build_all(d: Design, root: Path, out: Path, web: bool = True) -> tuple[dict,
         "notChecked": drift_result.not_checked if drift_result else None,
         "couldBeChecked": drift_result.could_check if drift_result else None,
         "contrastIssues": [plain(p) for p in d.contrast_problems()], "reviews": c,
-        "missing": missing + guide_missing, "reviewErrors": review_errors, "warnings": warnings,
+        "missing": missing + guide_missing, "reviewErrors": review_errors, "warnings": warnings, "handTyped": typed,
     }
     # canvas coverage (canvas/screens.json), screens that may be out of date, big embedded images
     summary.update(coverage=report.get("coverage"), outdated=report.get("outdated", []), canvasWarnings=report.get("warnings", []))
     lines[1:1] = screens_mod.coverage_lines(report.get("coverage")) + [f"warning: {o['message']}" for o in report.get("outdated", [])] \
         + [f"warning: {w}" for w in report.get("warnings", [])]
-    return summary, [f"warning: {w}" for w in warnings] + lines
+    return summary, [f"warning: {w}" for w in warnings] + hand_typed_lines(typed) + lines
 
 
 # ---------------------------------------------------------------- one screen as a PNG (headless Chrome)
@@ -847,6 +947,10 @@ def main(argv=None) -> int:
     ap.add_argument("--check", action="store_true", help="drift check only; exit 1 on drift")
     ap.add_argument("--max-derived", type=float, metavar="PERCENT",
                     help="with --check: also exit 1 when more than PERCENT %% of tokens are marked derived (not checked)")
+    ap.add_argument("--fail-on-contrast", action="store_true",
+                    help="with --check: also exit 1 when a text colour misses its contrast target on a colour it is read on")
+    ap.add_argument("--fail-on-stale", action="store_true",
+                    help="with --check: also exit 1 when a drawn screen may be out of date (its source has a newer git commit)")
     ap.add_argument("--validate", action="store_true", help="validate design.json and canvas files only")
     ap.add_argument("--root", help="app repo root (default: app.root in design.json, else '..')")
     ap.add_argument("--out", help="output folder (default: <dir>/out); with --shoot, the PNG file (default: <dir>/out/shots/<id>.png)")
@@ -865,6 +969,8 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     if a.max_derived is not None and (not a.check or not 0 <= a.max_derived <= 100):
         ap.error("--max-derived takes a percent from 0 to 100 and works with --check")
+    if (a.fail_on_contrast or a.fail_on_stale) and not a.check:
+        ap.error("--fail-on-contrast and --fail-on-stale work with --check")
 
     def emit(obj, text_lines, code):
         if a.json:
@@ -894,15 +1000,29 @@ def main(argv=None) -> int:
             lines.append("not checked: " + ", ".join(result.not_checked))
         if result.could_check:
             lines.append("could be checked: " + ", ".join(result.could_check))
+        contrast = [plain(p) for p in d.contrast_problems()] if a.fail_on_contrast else []
+        stale = []
+        if a.fail_on_stale:
+            rep: dict = {}
+            build_canvas(d, root, report=rep)
+            stale = rep.get("outdated") or []
+        lines += [f"CONTRAST: {p}" for p in contrast] + [f"STALE: {o['message']}" for o in stale]
         lines.append(f"drift check: {ok} ok, {len(problems)} drifted, {len(unsourced)} without src, {len(skipped)} derived ({pct(share)} not checked)"
-                     + (f", {len(result.not_checked)} field(s) not checked" if result.not_checked else ""))
-        summary = {"ok": not problems and not unsourced and not over, "checked": ok, "drift": [plain(p) for p in problems],
+                     + (f", {len(result.not_checked)} field(s) not checked" if result.not_checked else "")
+                     + (f", {len(contrast)} contrast issue(s)" if a.fail_on_contrast else "")
+                     + (f", {len(stale)} screen(s) may be out of date" if a.fail_on_stale else ""))
+        failed = bool(problems or unsourced or over or contrast or stale)
+        summary = {"ok": not failed, "checked": ok, "drift": [plain(p) for p in problems],
                    "unsourced": unsourced, "derived": skipped, "derivedShare": share, "notChecked": result.not_checked,
                    "couldBeChecked": result.could_check}
         if a.max_derived is not None:
             summary["maxDerived"] = a.max_derived
             summary["overMaxDerived"] = over
-        return emit(summary, lines, 1 if problems or unsourced or over else 0)
+        if a.fail_on_contrast:
+            summary["contrastIssues"] = contrast
+        if a.fail_on_stale:
+            summary["outdated"] = stale
+        return emit(summary, lines, 1 if failed else 0)
     if a.resolve:
         try:
             me = reviews.identity(d.dir, a.as_name)
@@ -926,9 +1046,12 @@ def main(argv=None) -> int:
         _, _, missing, _ = build_canvas(d, root)
         summary = f"design.json ok ({d.count()} tokens, {len(d.themes)} theme(s), {len(d.icons.get('items') or {})} icons)"
         warnings, contrast = d.warnings + undefined_vars(d), [plain(p) for p in d.contrast_problems()]
+        typed = hand_typed(d)
         return emit({"ok": not missing, "tokens": d.count(), "themes": len(d.themes), "icons": len(d.icons.get("items") or {}),
-                     "missing": missing, "reviewErrors": review_errors, "warnings": warnings, "contrastIssues": contrast},
-                    [f"warning: {w}" for w in warnings] + [f"review: {e}" for e in review_errors] + [f"missing: {m}" for m in missing]
+                     "missing": missing, "reviewErrors": review_errors, "warnings": warnings, "contrastIssues": contrast,
+                     "handTyped": typed},
+                    [f"warning: {w}" for w in warnings] + hand_typed_lines(typed) + [f"review: {e}" for e in review_errors]
+                    + [f"missing: {m}" for m in missing]
                     + [f"CONTRAST: {p}" for p in contrast] + [summary],
                     1 if missing else 0)
     out = Path(a.out).resolve() if a.out else d.dir / "out"

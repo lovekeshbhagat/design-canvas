@@ -366,6 +366,14 @@ class Outdated(Canvas):
         self.commit("2026-01-03T10:00:00+00:00")
         summary, _, _, _ = self.build(d)
         self.assertEqual([o["screen"] for o in summary["outdated"]], ["sheet"])
+        # --check can fail CI on it
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = build.main([str(d.dir), "--check", "--fail-on-stale", "--json"])
+        res = json.loads(buf.getvalue())
+        self.assertEqual((code, res["ok"], [o["screen"] for o in res["outdated"]]), (1, False, ["sheet"]))
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(build.main([str(d.dir), "--check"]), 0, "off by default")
 
     def test_no_repo_or_no_git_is_quiet(self):
         d = self.make({"home/home": frame("Home", "src/Home.swift")})

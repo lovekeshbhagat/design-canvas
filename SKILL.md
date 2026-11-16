@@ -46,7 +46,8 @@ Add `design-canvas/out/` to the app's `.gitignore` (create it if there is none):
    - `derived` is only for values the code computes. It is never a way to silence drift: fix the `src` line, the `code` name or the value instead.
    - If light and dark come from two constants, give `code` and `src` one entry per theme.
    - For an alias (`primary: palette.blue300`), point `src` at the line that defines the token, not the palette entry. The check follows the reference, so re-pointing it is caught.
-   - `--check` prints the derived share. CI can cap it with `--max-derived 10`. Treat "not checked" and "could be checked" lines as work left to do.
+   - `--check` prints the derived share. CI can cap it with `--max-derived 10`, and also fail on low contrast or out-of-date screens with `--fail-on-contrast --fail-on-stale`. Treat "not checked" and "could be checked" lines as work left to do.
+   - Write each colour the way the code does: hex, `rgb()`, `hsl()`, `oklch()`, `color(display-p3 …)` or `color-mix()`. Mark a colour used only for large text (24px+, or 18.66px bold) `"text": "large"`.
 3. **Icons.** List only the icons the app registers or imports.
    - Icons that come as files or a package (Lucide, Material Icons, the app's own SVGs): copy each icon's inner SVG shapes from where it really comes from, and record `source`. Keep the set's licence in mind; note it in the guide if it needs attribution.
    - Icons the operating system draws (SF Symbols, Material Symbols): never copy or redraw their artwork. List each with `system` and `name` (spec/DESIGN_JSON.md); screens show a labelled placeholder.
@@ -63,9 +64,9 @@ Add `design-canvas/out/` to the app's `.gitignore` (create it if there is none):
    python3 <skill>/engine/build.py design-canvas
    ```
    Open `out/guide.html` and `out/canvas.html` in a browser. Check every theme, every specimen and every screen against the code (or a screenshot of the real app when you have one). Then deal with every line the build prints:
-   - `warning:` a colour with no value for a theme, or a `var(--…)` that design.json doesn't define (with its file, line and the closest real name).
+   - `warning:` a colour with no value for a theme, a `var(--…)` that design.json doesn't define (with its file, line and the closest real name), or a hand-typed colour or token-sized value in `parts.css` or a screen. Use the token it names; keep a raw value only where the app's own code hardcodes it.
    - `missing:` a specimen, partial or screen file.
-   - `CONTRAST:` a text colour under 4.5:1 on the colour it is read on. If that is the wrong pair, set `on` (or `"text": false`). If it is right, the app really has low contrast: keep the value and say so in the guide.
+   - `CONTRAST:` a text colour under 4.5:1 (3:1 for `"text": "large"`) on the colour it is read on. If that is the wrong pair, set `on` (or `"text": false`). If it is right, the app really has low contrast: keep the value and say so in the guide.
 
    **No browser?** Rely on `build.py design-canvas --json` (`warnings`, `missing`, `contrastIssues`, `drift`), and ask the user to open the two pages and tell you what looks wrong.
 

@@ -24,7 +24,7 @@ A token is either a bare value (`"md": 12`, `"bg": "#FFFFFF"`) or an object:
 
 | Field | Meaning |
 | --- | --- |
-| `value` | The value. For colours, a hex or `rgba()` string, or one per theme: `{"light": "#fff", "dark": "#000"}`. |
+| `value` | The value. For colours, a hex, or a CSS colour function exactly as the code writes it: `rgb()`, `hsl()`, `oklch()`, `oklab()`, `color(display-p3 …)` or `color-mix()`. Or one per theme: `{"light": "#fff", "dark": "#000"}`. Functions go into the CSS unchanged, so the browser renders them exactly; contrast and the guide's hex use the sRGB conversion. |
 | `doc` | One line on what it's for, ideally the comment written next to it in the code. |
 | `group` | Optional heading it is listed under in the guide (`Background`, `Text`, `Brand`…). |
 | `code` | How the app's code refers to it (`colors.bg`, `bg-surface`, `Theme.surface`). |
@@ -58,6 +58,7 @@ A theme missing from `code` or `src` uses the default theme's entry. The plain s
   - spring fields, durations and easings
 
   Each value is matched against its own label (`x:`, `radius:`, `shadowOpacity`, `fontWeight`…), never against any number on the line.
+  Colours the code writes as CSS functions (`oklch()`, `hsl()`, `color(display-p3 …)`, `color-mix()`, or bare HSL channels like `222.2 47.4% 11.2%`) are converted to sRGB and match a token within 2/255 per channel, so a hex in `design.json` can stand for an `oklch()` in the code.
 - **Not checked.** A field the code does not state (a weight on a system text style, a shadow with no colour) is listed as `not checked: type.headline weight, …`. It does not fail the check.
 - **The derived share.** `--check` reports how many tokens are `derived`, and their share. `--check --max-derived 10` fails when more than 10% of tokens are derived. A derived token whose note names a `file:line` is listed as "could be checked".
 
@@ -109,12 +110,12 @@ The guide and the screen frames style themselves through these roles, so they wo
 
 ## Text colours and contrast
 
-The guide checks that text colours reach 4.5:1 on the colour they are read on. A colour counts as text when it plays the `text`, `textMuted` or `onAccent` role, has `on`, is named `onX`, or has the word `text`, `label`, `foreground` or `fg` in its name or group without a fill word (`bg`, `background`, `fill`, `surface`, `border`…). Words like `ink` or `content` don't count: apps use them for backgrounds too. Colours that aren't text get no contrast number.
+The guide checks that text colours reach 4.5:1 on the colour they are read on (3:1 for a colour marked `"text": "large"`). A colour counts as text when it plays the `text`, `textMuted` or `onAccent` role, has `on`, is named `onX`, or has the word `text`, `label`, `foreground` or `fg` in its name or group without a fill word (`bg`, `background`, `fill`, `surface`, `border`…). Words like `ink` or `content` don't count: apps use them for backgrounds too. Colours that aren't text get no contrast number.
 
 | Field | Meaning |
 | --- | --- |
 | `on` | The fill(s) the colour is read on: a colour token name, a list of names, or one of those per theme (`{"light": "pine", "dark": ["pine", "card"]}`). Contrast is checked on each. Without it, `onX` is read on `X`, `onAccent` on `accent`, and every other text colour on `background`. |
-| `text` | `true` or `false`, when the name or role gets it wrong: `true` checks the colour on `background` (or its `on`), `false` skips it. |
+| `text` | `true` or `false`, when the name or role gets it wrong: `true` checks the colour on `background` (or its `on`), `false` skips it. `"large"` marks a colour used only for large text (at least 24px, or 18.66px bold, like a display heading): it is checked against WCAG's 3:1 instead of 4.5:1. |
 
 ```json
 "onPine": { "value": "#FFFFFF", "on": "pine", "doc": "Labels on pine buttons" },
